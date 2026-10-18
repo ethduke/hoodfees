@@ -523,11 +523,6 @@ export default function Home() {
           <Link href="/" className="brand" aria-label="Hood Fee Harvest home">
             <Brand /><span>hood<span className="brand-sub">FEE HARVEST</span></span>
           </Link>
-          <nav className="top-nav" aria-label="Main navigation">
-            <a href="#harvest" className="nav-link active">Overview</a>
-            <a href="#fees" className="nav-link">Your fees</a>
-            <button className="nav-link" onClick={() => setInfo(true)}>Coverage <ArrowUpRight size={13} /></button>
-          </nav>
           <div className="topbar-right">
             <span className="header-network"><span className="green-dot" /> Robinhood Chain</span>
             <div className="wallet-control">
