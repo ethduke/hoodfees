@@ -903,29 +903,6 @@ export default function Home() {
               </span>
             </div>
           </section>
-          <div className="source-health">
-            {included.map((source) => {
-              const state = scanStates[source.id];
-              return (
-                <div key={source.id}>
-                  <span className={`pad-mark ${source.id}`}>{source.mark}</span>
-                  <div>
-                    <strong>{source.name}</strong>
-                    <small>
-                      {state?.error
-                        ? "Read unavailable"
-                        : state?.result?.coverage.complete
-                          ? activeTab === "history" ? "Payout history loaded" : "Fee discovery complete"
-                          : state?.result
-                            ? `${state.result.coverage.percent.toFixed(2)}% of ${activeTab === "history" ? "history" : "discovery"} checked`
-                            : "Ready to scan"}
-                    </small>
-                  </div>
-                  <span className={`health-dot ${state?.error ? "error" : ""}`} />
-                </div>
-              );
-            })}
-          </div>
           {included.map((source) => {
             const state = scanStates[source.id];
             return (
