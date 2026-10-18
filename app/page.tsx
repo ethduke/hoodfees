@@ -81,6 +81,7 @@ type Result = {
   checkpoint?: string;
   resetBalances?: boolean;
   updatesComplete?: boolean;
+  discovery?: "wallet-index";
   snapshotCursor: string;
   source: string;
   snapshot: { number: number; hash: string; timestamp: number };
@@ -114,8 +115,10 @@ const errors: Record<string, string> = {
   response_limit: "This historical page exceeds the provider limit.",
   position_limit: "This wallet exceeds the current scan capacity. The result remains incomplete.",
   page_limit: "This page exceeded its read budget. Continue to retry.",
+  index_unavailable: "The O1 wallet index is unavailable. Saved progress is kept; try again shortly.",
 };
 const warningText: Record<string, string> = {
+  o1_unreviewed_escrow: "The O1 index returned an escrow outside the reviewed contract set. Its fees are excluded from claims here.",
   migrated_pool: "Migrated Doppler pools are outside this adapter’s coverage.",
   other_doppler_route: "Other integrations on the shared manager were excluded.",
   archive_required:
@@ -982,7 +985,7 @@ export default function Home() {
                 are never converted into a pretend combined currency.
               </p>
               <p>
-                <strong>Progress stays in this browser.</strong> Scan results, wallet addresses, source choices and signed progress cursors are stored locally per wallet so you can resume after refresh or reconnect. Reset scan removes the connected wallet’s saved progress. No wallet address is put in URLs, application logs, analytics or a database. Chain queries go to the provider; hosting logs depend on the operator’s settings. Signed scan checkpoints survive cursor expiry. Returning refreshes known balances and checks new blocks; unfinished older ranges stay available through Continue scan. A changed chain snapshot or signing key can require a reset.
+                <strong>Progress stays in this browser.</strong> Scan results, wallet addresses, source choices and signed progress cursors are stored locally per wallet so you can resume after refresh or reconnect. Reset scan removes the connected wallet’s saved progress. No wallet address is put in this site’s URLs, application logs, analytics or a database. O1 discovery sends your address to O1’s wallet index through the server; onchain queries go to the chain provider. Hosting logs depend on the operator’s settings. Signed scan checkpoints survive cursor expiry. Returning refreshes known balances and discovery; unfinished older ranges stay available through Continue scan. A changed chain snapshot or signing key can require a reset.
               </p>
               <p>
                 <strong>More adapters come later.</strong> Bags, Flap, pools.trade, PAIR and other
