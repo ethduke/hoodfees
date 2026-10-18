@@ -486,6 +486,9 @@ export default function Home() {
   const hasSourceErrors = included.some((source) => scanStates[source.id]?.error);
   const allBalances = included.flatMap((s) => states[s.id]?.balances ?? []);
   const available = allBalances.filter((r) => r.kind === "available" && BigInt(r.raw) > 0n);
+  const sourcesWithFees = new Set(SOURCE_INFO.filter((source) =>
+    wallet && states[source.id]?.balances.some((row) => row.kind === "available" && BigInt(row.raw) > 0n),
+  ).map((source) => source.id));
   const pending = allBalances.filter((r) => r.kind !== "available" && BigInt(r.raw) > 0n);
   const claimed = included
     .flatMap((s) => historyStates[s.id]?.history ?? [])
@@ -624,8 +627,10 @@ export default function Home() {
                 {SOURCE_INFO.map((source) => (
                   <button
                     key={source.id}
-                    className={`source-chip ${selected.has(source.id) ? "selected" : ""}`}
+                    className={`source-chip ${selected.has(source.id) ? "selected" : ""} ${sourcesWithFees.has(source.id) ? "has-fees" : ""}`}
                     aria-pressed={selected.has(source.id)}
+                    aria-label={`${source.name}${sourcesWithFees.has(source.id) ? ": available fees found" : ""}`}
+                    title={sourcesWithFees.has(source.id) ? "Available fees found" : undefined}
                     disabled={running || claimBusy}
                     onClick={() => toggleSource(source.id)}
                   >

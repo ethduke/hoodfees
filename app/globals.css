@@ -82,6 +82,9 @@ main { min-width: 0; flex: 1; padding: 37px 40px 0; }
 .source-selector > div { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
 .source-chip { display: flex; align-items: center; gap: 8px; background: transparent; border: 1px solid #363a44; color: var(--muted); padding: 9px 11px; border-radius: 6px; font-size: 10px; }
 .source-chip.selected { background: #23262b; border-color: #414637; color: #d3dac9; }
+.source-chip.has-fees { background: #263b20; border-color: #91bb61; color: var(--green); }
+.source-chip.has-fees:disabled { opacity: 1; }
+.source-chip.has-fees:hover:not(:disabled) { background: #304b27; border-color: var(--green); }
 .source-chip:hover:not(:disabled) { border-color: #9aaa7a; }
 .source-chip > svg { color: var(--green); }
 .source-chip .pad-mark { width: 19px; height: 19px; font-size: 11px; border-radius: 4px; }
