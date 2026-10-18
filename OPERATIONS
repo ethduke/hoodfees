@@ -10,9 +10,9 @@ Optional server settings are described in .env.example. Put real values in an
 ignored .env.local for local development or in your hosting provider's secret
 manager. Never use a NEXT_PUBLIC variable for provider URLs or keys.
 
-Wallet queries use same-origin POST requests. The application does not persist
-wallet queries, use browser storage, add addresses to URLs, or log request bodies,
-provider responses, error stacks, or credentials. Hosting providers may maintain
+Wallet queries use same-origin POST requests. Wallet addresses and signed scan progress are cached only in browser storage.
+The application does not add addresses to URLs or log request bodies, provider
+responses, error stacks, or credentials. Hosting providers may maintain
 infrastructure access logs; configure those independently and disable body tracing.
 
 Historical scans are resumable and bounded. Keep SCAN_CURSOR_SECRET stable across
@@ -68,6 +68,52 @@ A reverted or unverified payout is never recorded as a successful fee claim.
 
 Account changes invalidate unsubmitted reviews. A submitted claim is still tracked
 for its original owner; it only refreshes that owner's current view. Disconnecting
-clears scan results. No wallet address, query, review or transaction history is
-persisted by the application or written to logs.
+clears scan results. Browser-local scan progress survives disconnects; Reset scan removes the chosen
+wallet's saved progress. Wallet queries and claim reviews are not stored on the
+server or written to logs.
 Run git config core.hooksPath .githooks to enable local pre-commit guards.
+
+Standalone Cloudflare Workers hosting
+
+The repository deploys one Worker named hoodfees plus static frontend assets.
+The build reads no dotenv files; runtime keys are Worker secret bindings.
+Configure ROBINHOOD_RPC_URL, O1_API_KEY and SCAN_CURSOR_SECRET in Cloudflare
+Settings > Variables and Secrets. Never add these values to GitHub build variables.
+Missing bindings disable scanning and claim preparation; no public-RPC fallback
+or temporary signing key is used by the production Worker.
+
+GitHub CI runs locked installation, repository privacy checks, synthetic wallet
+and claim tests, type checks, the actual Worker build and dependency auditing.
+The locally patched build parser is kept under vendor/braces with its upstream
+MIT license. Pattern and AST limits address GHSA-vfj7-8cjw-p6xm; regression tests
+exercise ordinary expansion, excessive nesting and cyclic ASTs.
+
+In Cloudflare Workers & Pages, connect ethduke/hoodfees, branch main, Worker name
+hoodfees. Use this build command:
+  npm ci --ignore-scripts && npm run verify:worker
+Use this deploy command:
+  npm run deploy:worker
+Build output is dist/server/wrangler.json with dist/client assets. Runtime secrets
+must not be supplied to the build. Check /api/health for status ok and the expected
+Git commit SHA, then verify the public page and a synthetic read-only scan.
+Retain the previous Cloudflare deployment version for dashboard rollback.
+
+Add hoodfees.xyz as a Cloudflare DNS zone and preserve its existing DNS records.
+Replace the registrar's nameservers with the two nameservers assigned to the zone.
+The Worker configuration binds hoodfees.xyz and www.hoodfees.xyz as Custom Domains;
+Cloudflare provisions their routing records and HTTPS certificates. No fixed A or
+AAAA server IP is required. www redirects to the root domain for webpage GETs.
+The existing www CNAME must be replaced during cutover, not before testing.
+
+Progress migration is local export/restore using Saved progress in the footer.
+Changing a hostname does not transfer browser localStorage or wallet permissions.
+Keep the old site available until backups have been restored and the wallet has
+reconnected. Never send backup files to the API or commit them.
+
+The previous host retains its signing key and exposes /api/progress/migrate.
+The bridge verifies the exact read-only checkpoint signature without returning
+or sharing any signing key. Configure LEGACY_PROGRESS_URL only on the new Worker.
+The new Worker contacts that fixed HTTPS host without redirects, verifies the
+response, signs the same read-only state with its own key, and checks the canonical
+block before resuming ranges. Claim permissions cannot migrate. A failed handoff
+keeps the checkpoint and reports a fixed error; it never silently resets the scan.

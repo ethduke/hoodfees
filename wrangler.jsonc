@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hoodfees",
+  "main": "worker.ts",
+  "compatibility_date": "2026-10-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": { "directory": "dist/client", "binding": "ASSETS" },
+  "routes": [
+    { "pattern": "hoodfees.xyz", "custom_domain": true },
+    { "pattern": "www.hoodfees.xyz", "custom_domain": true }
+  ],
+  "observability": { "enabled": false }
+}

@@ -15,3 +15,7 @@ https://docs.bags.fm/robinhood/claim-fees
 https://github.com/bagsfm/bags-idl/tree/main/robinhood-abi-v2
 https://docs.bankr.bot/token-launching/reading-fees/
 https://docs.bankr.bot/token-launching/claiming-fees/
+
+The build tooling uses braces 3.0.3 by Jon Schlinkert and contributors (MIT),
+vendored under vendor/braces with pattern/AST depth and node-count limits for
+GHSA-vfj7-8cjw-p6xm. The upstream license is retained beside the patched source.

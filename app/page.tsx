@@ -97,6 +97,7 @@ type SourceState = {
   pages: number;
 };
 const errors: Record<string, string> = {
+  migration_unavailable: "The previous host could not verify this saved checkpoint. Your progress is kept; try refreshing again shortly.",
   invalid_address: "Enter a valid Ethereum wallet address.",
   provider_unavailable:
     "The chain provider is unavailable. Your scan progress is kept; try again shortly.",

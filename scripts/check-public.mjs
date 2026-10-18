@@ -12,7 +12,7 @@ export function checkBlob(path, bytes) {
       path,
     ) ||
     (/(?:^|\/)\.env(?:\.|$)/.test(path) && path !== ".env.example") ||
-    (/(?:^|\/)\.[^/]+/.test(path) && ![".gitignore", ".env.example"].includes(path) && !path.startsWith(".githooks/"))
+    (/(?:^|\/)\.[^/]+/.test(path) && ![".gitignore", ".env.example"].includes(path) && !path.startsWith(".githooks/") && path !== ".github/workflows/ci.yml")
   )
     violations.push("excluded file");
   const excludedNames = [["open", "ai"], ["co", "dex"], ["chat", "gpt"]].map((parts) => parts.join(""));

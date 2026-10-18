@@ -41,3 +41,8 @@ logs/
 *.md
 *.tsbuildinfo
 next-env.d.ts
+
+# The CI workflow is public; account settings and build outputs stay local.
+!.github/
+!.github/workflows/
+!.github/workflows/ci.yml
