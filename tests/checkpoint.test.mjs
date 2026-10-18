@@ -6,6 +6,7 @@ import { open, openProgress, seal, sealProgress } from "../lib/fees/cursor.mjs";
 import { O1, LONG, LONG_HOOK, PONS, PONS_V1, PONS_FACTORY } from "../lib/fees/catalog.mjs";
 import { o1Legacy } from "../lib/fees/abi.mjs";
 import { NATIVE, ReadError, poolId } from "../lib/fees/model.mjs";
+import { runScanQueue } from "../lib/wallet/scan-queue.mjs";
 
 const wallet=`0x${"11".repeat(20)}`, asset=`0x${"22".repeat(20)}`, freshAsset=`0x${"44".repeat(20)}`;
 const secret="checkpoint-fixture-"+"x".repeat(40), height=88000000;
@@ -80,6 +81,29 @@ test("partial checkpoints keep unsearched older ranges while a return pass reads
   const resumed=await finish(rpc,{address:wallet,source:"o1",scope:"balances",cursor:next.result.cursor});
   assert.equal(resumed.result.coverage.complete,true);
   assert.ok(rpc.queries.some(q=>Number(BigInt(q.fromBlock))===O1[0].start));
+});
+test("automatic refresh drains both new blocks and unfinished historical ranges to 100%",async()=>{
+  for (const source of ["o1", "long", "pons"]) {
+    const rpc=fixture();
+    let result=await scan({address:wallet,source,scope:"balances"},{secret,createRpc:()=>rpc});
+    let input={address:wallet,source,scope:"balances",checkpoint:result.checkpoint};
+    const results=[];
+    rpc.height+=20;rpc.queries=[];
+    await runScanQueue({sources:[source],signal:new AbortController().signal,interval:0,
+      isComplete:()=>result.coverage.complete,
+      step:async()=>{
+        result=await scan(input,{secret,createRpc:()=>rpc});
+        results.push(result);
+        input={address:wallet,source,scope:"balances",cursor:result.cursor};
+      },
+      onError:(_,error)=>{throw error;},
+    });
+    assert.ok(results.some(page=>page.updatesComplete&&!page.coverage.complete));
+    assert.equal(result.coverage.complete,true);
+    assert.equal(result.coverage.percent,100);
+    assert.ok(rpc.queries.some(query=>Number(BigInt(query.fromBlock))===height+1));
+    assert.ok(rpc.queries.some(query=>Number(BigInt(query.fromBlock))<height));
+  }
 });
 test("history checkpoints append new payouts without rereading covered history or current balances",async()=>{
   const rpc=fixture(),old=await finish(rpc,{address:wallet,source:"o1",scope:"history"});

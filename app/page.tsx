@@ -19,10 +19,9 @@ import { ClaimController } from "../lib/wallet/claims.mjs";
 import { claimKey } from "../lib/fees/claim-plan.mjs";
 import { WalletAdapter } from "../lib/wallet/adapter.mjs";
 import { ScanCache } from "../lib/wallet/scan-cache.mjs";
+import { runScanQueue, ScanError } from "../lib/wallet/scan-queue.mjs";
 import { SOURCE_INFO } from "../lib/fees/catalog.mjs";
 import { compactAmount, mergeRows, uniqueFeeRows, totals } from "../lib/fees/model.mjs";
-const SCAN_PASS_REQUESTS = 6;
-const SCAN_PASS_DURATION = 20_000;
 type ScanScope = "balances" | "history";
 type WalletOption = { id: string; name: string; rabby: boolean; provider: { request: (input: { method: string }) => Promise<unknown> } };
 type WalletEvent =
@@ -91,6 +90,7 @@ type Result = {
 };
 type SourceState = {
   result?: Result;
+  refreshPending?: boolean;
   balances: FeeRow[];
   history: FeeRow[];
   error?: string;
@@ -177,6 +177,7 @@ export default function Home() {
     [showZero, setShowZero] = useState(false),
     [filter, setFilter] = useState("all"),
     [notice, setNotice] = useState("");
+  const [retrying, setRetrying] = useState<Record<string, string>>({});
   const active = useRef(false),
     generation = useRef(0),
     controller = useRef<AbortController | null>(null),
@@ -192,6 +193,7 @@ export default function Home() {
   function stop() {
     cancelWork();
     setRunning(false);
+    setRetrying({});
   }
   function connectDefault() {
     adapter.current?.discoverLegacy();
@@ -243,43 +245,43 @@ export default function Home() {
     stop();
     if (scope === "history") { historyStarted.current = true; historyNeedsUpdate.current = false; }
     const token = generation.current;
+    const runController = new AbortController();
+    controller.current = runController;
+    const { signal } = runController;
+    const isActive = () => !signal.aborted && active.current && token === generation.current;
     active.current = true;
     setRunning(true);
     setNotice("");
-    let current: Record<string, SourceState> = { ...(scope === "history" ? historyLatest.current : latest.current) };
-    if (update) current = Object.fromEntries(Object.entries(current).map(([id,state])=>[id,{...state,error:undefined}]));
     const ids = SOURCE_INFO.filter((s) => selectedRef.current.has(s.id)).map((s) => s.id);
-    const updatesWanted = new Set(update ? ids.filter((id)=>current[id]?.result) : []);
-    const renewed = new Set<string>(), settled = new Set<string>(), readSources = new Set<string>();
-    let requests = 0;
-    let timedOut = false;
-    // This scan starts from wallet/UI events after render.
-    // eslint-disable-next-line react-hooks/purity
-    const deadline = Date.now() + SCAN_PASS_DURATION;
-    const timeout = setTimeout(() => {
-      if (token === generation.current && active.current) {
-        timedOut = true;
-        controller.current?.abort();
-      }
-    }, SCAN_PASS_DURATION);
-    const withinBudget = () => !timedOut && requests < SCAN_PASS_REQUESTS && Date.now() < deadline;
+    let current: Record<string, SourceState> = Object.fromEntries(Object.entries(
+      scope === "history" ? historyLatest.current : latest.current,
+    ).map(([id, state]) => [id, {
+      ...state,
+      error: undefined,
+      // Keep queued refreshes across Pause/reload, even when old coverage was 100%.
+      refreshPending: state.refreshPending || !!(state.result && ids.includes(id) && (update || state.error && state.result.coverage.complete)),
+    }]));
+    publish(current, scope);
+    const updatesWanted = new Set(ids.filter((id) => current[id]?.refreshPending));
+    const renewed = new Set<string>(), readSources = new Set<string>();
+    const sourceName = (id: string) => SOURCE_INFO.find((source) => source.id === id)?.name;
+    const sourceComplete = (id: string) => !!current[id]?.result?.coverage.complete && !updatesWanted.has(id);
     try {
-      while (active.current && token === generation.current && withinBudget()) {
-        let didWork = false;
-        for (const id of ids) {
-          if (!active.current || token !== generation.current || !withinBudget()) break;
-          const existing = current[id];
-          if (settled.has(id) || (existing?.result?.coverage.complete && !updatesWanted.has(id)) || existing?.error) continue;
-          didWork = true;
-          requests++;
-          setNotice(`Checking ${SOURCE_INFO.find((source) => source.id === id)?.name}: ${scope === "history" ? "payout history" : "available fees"}.`);
-          controller.current = new AbortController();
+      await runScanQueue({
+        sources: ids,
+        signal,
+        isComplete: sourceComplete,
+        step: async (id: string) => {
+          if (!isActive()) return;
+          const existing = current[id], saved = existing?.result;
+          const renewing = updatesWanted.has(id);
+          if (renewing) renewed.add(id);
+          setNotice(`Checking ${sourceName(id)}: ${scope === "history" ? "payout history" : "available fees"}. Scanning continues until all selected sources reach 100%.`);
+          const snapshotCursor = anchor || Object.entries(current).find(([source, state]) => readSources.has(source) && state.result)?.[1].result?.snapshotCursor;
+          let response: Response;
+          let data: Result & { error: string };
           try {
-            const saved = existing?.result;
-            const renewing = updatesWanted.has(id);
-            if (renewing) { updatesWanted.delete(id); renewed.add(id); }
-            const snapshotCursor = anchor || Object.entries(current).find(([source,state])=>readSources.has(source) && state.result)?.[1].result?.snapshotCursor;
-            const response = await fetch("/api/scan", {
+            response = await fetch("/api/scan", {
               method: "POST",
               headers: { "content-type": "application/json", "x-hood-intent": "scan" },
               body: JSON.stringify({
@@ -288,97 +290,91 @@ export default function Home() {
                 scope,
                 ...(renewing && saved ? {
                   checkpoint: saved.checkpoint || saved.cursor || saved.snapshotCursor,
-                  ...(!saved.checkpoint && !saved.cursor && scope === "balances" ? {positions: [...new Map((existing.balances ?? []).map((row)=>[
+                  ...(!saved.checkpoint && !saved.cursor && scope === "balances" ? { positions: [...new Map((existing.balances ?? []).map((row) => [
                     `${row.target}:${row.position || row.currency}:${row.kind || "available"}`,
-                    row.position ? {target:row.target,token:row.token,position:row.position,kind:row.kind} : {target:row.target,currency:row.currency},
-                  ])).values()]} : {}),
-                } : saved?.cursor ? {cursor:saved.cursor} : snapshotCursor ? {snapshotCursor} : {}),
+                    row.position ? { target: row.target, token: row.token, position: row.position, kind: row.kind } : { target: row.target, currency: row.currency },
+                  ])).values()] } : {}),
+                } : saved?.cursor ? { cursor: saved.cursor } : snapshotCursor ? { snapshotCursor } : {}),
               }),
-              signal: controller.current.signal,
+              // Bound a stalled request, not the lifetime of the entire scan.
+              signal: AbortSignal.any([signal, AbortSignal.timeout(60_000)]),
               cache: "no-store",
             });
-            const data = (await response.json()) as Result & { error: string };
-            if (token !== generation.current || !active.current || timedOut) break;
-            if (!response.ok) {
-              if (data.error === "cursor_expired" && saved && !renewed.has(id)) {
-                updatesWanted.add(id);
-                continue;
-              }
-              current = {
-                ...current,
-                [id]: {
-                  ...existing,
-                  balances: existing?.balances ?? [],
-                  history: existing?.history ?? [],
-                  pages: existing?.pages ?? 0,
-                  error: errors[data.error] ?? errors.provider_unavailable,
-                },
-              };
-              publish(current, scope);
-              continue;
-            }
-            const result = data as Result;
-            readSources.add(id);
-            if (result.updatesComplete) settled.add(id);
-            current = {
-              ...current,
-              [id]: {
-                result,
-                balances: mergeRows([
-                  ...(result.resetBalances ? [] : existing?.balances ?? []),
-                  ...result.balances,
-                ]) as FeeRow[],
-                history: mergeRows([...(existing?.history ?? []), ...result.history]) as FeeRow[],
-                pages: (existing?.pages ?? 0) + 1,
-              },
-            };
-            publish(current, scope);
-          } catch {
-            if (token !== generation.current || !active.current || timedOut) break;
-            current = {
-              ...current,
-              [id]: {
-                ...existing,
-                balances: existing?.balances ?? [],
-                history: existing?.history ?? [],
-                pages: existing?.pages ?? 0,
-                error: errors.provider_unavailable,
-              },
-            };
-            publish(current, scope);
+          } catch { throw new ScanError("provider_unavailable"); }
+          try { data = await response.json(); }
+          catch {
+            throw new ScanError(response.status === 429 ? "rate_limited" : response.ok ? "invalid_response" : "provider_unavailable");
           }
-        }
-        if (!didWork) break;
-        if (active.current && withinBudget())
-          await new Promise((resolve) => setTimeout(resolve, 350));
-      }
-      if (active.current && token === generation.current) {
+          if (!isActive()) return;
+          if (!response.ok) {
+            if (data.error === "cursor_expired" && saved && !renewed.has(id)) {
+              updatesWanted.add(id);
+              return;
+            }
+            const retryHeader = response.headers.get("retry-after");
+            const seconds = retryHeader ? Number(retryHeader) : 0;
+            const retryAfter = Number.isFinite(seconds) ? seconds * 1000 : Math.max(0, Date.parse(retryHeader || "") - Date.now());
+            throw new ScanError(response.status === 429 ? "rate_limited" : data.error || "provider_unavailable", retryAfter);
+          }
+          const result = data as Result;
+          updatesWanted.delete(id);
+          readSources.add(id);
+          setRetrying((prior) => { const next = { ...prior }; delete next[id]; return next; });
+          current = {
+            ...current,
+            [id]: {
+              result,
+              balances: mergeRows([
+                ...(result.resetBalances ? [] : existing?.balances ?? []),
+                ...result.balances,
+              ]) as FeeRow[],
+              history: mergeRows([...(existing?.history ?? []), ...result.history]) as FeeRow[],
+              pages: (existing?.pages ?? 0) + 1,
+            },
+          };
+          // Persist each successful page before scheduling another request.
+          publish(current, scope);
+        },
+        onRetry: (id, retry) => {
+          if (!isActive()) return;
+          const message = retry.code === "rate_limited" ? "Provider busy" : "Provider temporarily unavailable";
+          setRetrying((prior) => ({ ...prior, [id]: `${message} · retrying automatically` }));
+          setNotice(`${sourceName(id)}: ${message.toLowerCase()}. Retrying automatically in ${Math.ceil(retry.delay / 1000)} seconds. Your progress is saved.`);
+        },
+        onError: (id, error) => {
+          if (!isActive()) return;
+          const existing = current[id];
+          setRetrying((prior) => { const next = { ...prior }; delete next[id]; return next; });
+          current = { ...current, [id]: {
+            ...existing,
+            balances: existing?.balances ?? [],
+            history: existing?.history ?? [],
+            pages: existing?.pages ?? 0,
+            error: errors[error instanceof ScanError ? error.code : "provider_unavailable"] ?? errors.provider_unavailable,
+          } };
+          publish(current, scope);
+        },
+      });
+      if (isActive()) {
         const failed = ids.some((id) => current[id]?.error);
-        const finished = ids.length > 0 && ids.every((id) => current[id]?.result?.coverage.complete && !current[id]?.error);
+        const finished = ids.length > 0 && ids.every(sourceComplete);
         setNotice(failed
-          ? "Some sources could not be read. Verified results are kept; unread fees remain unknown. Continue to retry."
-          : settled.size > 0 && ids.every((id)=>settled.has(id) || current[id]?.result?.coverage.complete)
-            ? `${scope === "history" ? "New payouts checked" : "New blocks checked and known balances refreshed"}. Saved older coverage is kept. Continue scan checks any unfinished older ranges.`
+          ? "Some sources need attention and remain incomplete. Other selected sources have finished. Your verified results and progress are saved."
           : finished
-            ? scope === "history" ? "Payout history loaded for the selected contracts." : "Available-fee checks complete for the selected contracts. Open Payout history to load past claims."
-            : `This scan pass is finished. Your results are kept. Choose Continue scan to check more ${scope === "history" ? "payout history" : "fee positions"}.`);
+            ? scope === "history" ? "100% of supported payout-history checks complete for every selected source." : "100% of supported available-fee checks complete for every selected source. Open Payout history to check past claims."
+            : "Choose at least one source to start scanning.");
       }
     } finally {
-      clearTimeout(timeout);
       if (token === generation.current) {
         active.current = false;
         setRunning(false);
+        setRetrying({});
       }
     }
   }
   function continueScan() {
-    const scope = activeTab === "history" ? "history" : "balances";
-    const needsUpdate = Object.values(scope === "history" ? historyLatest.current : latest.current).some((state)=>state.error && state.result);
-    const cleaned = Object.fromEntries(
-      Object.entries(scope === "history" ? historyLatest.current : latest.current).map(([id, state]) => [id, { ...state, error: undefined }]),
-    );
-    publish(cleaned, scope);
-    void run(wallet, needsUpdate, undefined, scope);
+    // Resume the saved cursor; renew it only if the server reports expiry.
+    void run(wallet, false, undefined, activeTab === "history" ? "history" : "balances");
   }
   function changeTab(tab: string) {
     if (tab === activeTab) return;
@@ -397,7 +393,7 @@ export default function Home() {
     setSelected(next);
     setFilter("all");
     saveProgress();
-    if (wallet && next.size) setNotice("Scan sources updated. Choose Continue scan to check your selection.");
+    if (wallet && next.size) setNotice("Scan sources updated. Choose Resume scan to check your selection.");
     else if (wallet) { stop(); setNotice("Choose at least one scan source to start checking fees."); }
   }
   function resetScan() {
@@ -414,7 +410,7 @@ export default function Home() {
     setStorageError(!removed);
     setActiveTab("unclaimed");
     setConnectionNotice("Local scan progress reset. Available fees will be checked first; payout history stays on demand.");
-    setNotice("Scan progress cleared. Choose Continue scan to start again.");
+    setNotice("Scan progress cleared. Choose Resume scan to start again.");
   }
   const claimBusy = ["preparing", "review", "wallet", "submitted", "confirming", "uncertain"].includes(claimState.phase);
   function beginClaim(row: FeeRow) {
@@ -521,8 +517,8 @@ export default function Home() {
     .sort((a, b) => (b.block ?? 0) - (a.block ?? 0));
   const complete =
     wallet && included.length > 0 &&
-    included.every((s) => scanStates[s.id]?.result?.coverage.complete && !scanStates[s.id]?.error);
-  const historyComplete = included.length > 0 && included.every((s) => historyStates[s.id]?.result?.coverage.complete && !historyStates[s.id]?.error);
+    included.every((s) => scanStates[s.id]?.result?.coverage.complete && !scanStates[s.id]?.refreshPending && !scanStates[s.id]?.error);
+  const historyComplete = included.length > 0 && included.every((s) => historyStates[s.id]?.result?.coverage.complete && !historyStates[s.id]?.refreshPending && !historyStates[s.id]?.error);
   const historyIncomplete = included.some((s) =>
     historyStates[s.id]?.result?.warnings.includes("archive_required"),
   );
@@ -636,16 +632,16 @@ export default function Home() {
               <div className="scan-overview">
                 <div className="scan-summary" role="status" aria-live="polite" aria-atomic="true">
                   <span className={running ? "pulse-dot" : "green-dot"} />
-                  <strong>{running ? "Checking a short batch…" : complete
+                  <strong>{running ? "Scanning to 100%…" : complete
                     ? activeTab === "history" ? "Payout history loaded" : "Available-fee checks complete"
                     : !included.length ? "Choose scan sources" : hasSourceErrors ? "Scan needs attention" : "Scan paused"}</strong>
                   <p>{notice || (activeTab === "history"
-                    ? "Continue to check older payouts."
+                    ? "Resume scanning to finish checking older payouts."
                     : "Payout history loads only when opened.")}</p>
                 </div>
                 <div className="scan-actions">
                   {running ? (
-                    <button className="secondary-button" onClick={() => { stop(); setNotice("Your results are kept. Continue whenever you are ready."); }}>
+                    <button className="secondary-button" onClick={() => { stop(); setNotice("Scan paused. Completed pages are saved in this browser. Resume scan to continue from your checkpoint."); }}>
                       <Pause size={14} />Pause
                     </button>
                   ) : (
@@ -657,7 +653,7 @@ export default function Home() {
                       </button>
                       {!complete && included.length > 0 && (
                         <button className="secondary-button" disabled={claimBusy} onClick={continueScan}>
-                          Continue scan<ArrowRight size={14} />
+                          Resume scan<ArrowRight size={14} />
                         </button>
                       )}
                     </>
@@ -668,25 +664,31 @@ export default function Home() {
                 <summary>Scan details<span>{storageError ? "Storage unavailable" : savedAt ? "Saved in this browser" : ""}</span></summary>
                 <p>{connectionNotice}</p>
                 <p>{storageError ? "Progress may not survive a refresh."
-                  : "Saved checkpoints survive cursor expiry. Refresh updates known balances and discovery; Continue scan resumes unfinished work."}
-                  {` Each pass stops after ${SCAN_PASS_REQUESTS} requests or ${SCAN_PASS_DURATION / 1000} seconds.`}</p>
+                  : "Each completed page is saved in this browser. Scans continue automatically until every selected source reaches 100%. Pause at any time; Resume scan keeps your progress."}
+                  {" Requests run one page at a time with a delay between pages. Busy providers are retried automatically with increasing delays."}</p>
                 <ul className="source-progress">
                   {included.map((source) => {
                     const state = scanStates[source.id], result = state?.result;
                     const indexed = result?.discovery === "wallet-index";
                     const registry = result?.discovery === "onchain-registry" && activeTab !== "history";
+                    const percent = result?.coverage.complete && !state.refreshPending ? 100 : Math.min(99.99, result?.coverage.percent ?? 0);
+                    const label = state?.error ? "Needs attention · incomplete" : !result ? "Waiting to check"
+                      : state.refreshPending ? "Refreshing saved positions and discovery"
+                      : registry ? `${percent.toFixed(2)}% · ${result.coverage.positionsChecked ?? 0} / ${result.coverage.positionsTotal ?? 0} registry entries checked`
+                      : indexed && activeTab !== "history" ? result.coverage.complete ? "100% · indexed positions verified" : "Checking wallet index and verifying fees"
+                      : result.coverage.complete ? "100% · supported checks complete"
+                      : !result.coverage.blocksChecked && !result.coverage.pending ? "0.00% · preparing historical ranges"
+                      : `${percent.toFixed(2)}% · event coverage${result.coverage.pending ? " · verifying records" : ""}`;
                     return <li key={source.id}>
-                      <div><strong>{source.name}</strong><span>{state?.error ? "Needs attention" : !result ? "Not checked yet"
-                        : registry ? `${result.coverage.positionsChecked ?? 0} / ${result.coverage.positionsTotal ?? 0} registry entries checked`
-                        : indexed && activeTab !== "history" ? result.coverage.complete ? "Indexed positions checked" : "Indexed positions found · verifying fees"
-                        : `${result.coverage.percent.toFixed(2)}% of event ranges checked`}</span></div>
+                      <div><strong>{source.name}</strong><span>{label}</span></div>
                       {result && <progress aria-label={`${source.name} ${registry ? "registry" : indexed ? "wallet index" : "event range"} progress`} max={100}
-                        value={indexed && activeTab !== "history" && !result.coverage.complete ? undefined : result.coverage.percent} />}
+                        value={state.refreshPending || indexed && activeTab !== "history" && !result.coverage.complete ? undefined : percent} />}
+                      {retrying[source.id] && <small role="status">{retrying[source.id]}</small>}
                       {result && <small>{state.pages} scan requests · {result.coverage.pending} records awaiting verification · <a href={explorer("block", String(result.snapshot.number))} target="_blank" rel="noreferrer">Block {result.snapshot.number.toLocaleString()}<ArrowUpRight size={10} /></a></small>}
                     </li>;
                   })}
                 </ul>
-                <p>Scans use snapshots with 20 confirmations. {snapshotsMatch ? "Selected fee sources share a snapshot." : "Source snapshots may differ."}</p>
+                <p>100% means the supported checks for this view are complete at its snapshot block. Index delays and the exclusions under What’s covered still apply. Scans use 20 confirmations. {snapshotsMatch ? "Selected fee sources share a snapshot." : "Source snapshots may differ."}</p>
                 <button className="text-button reset-scan" disabled={claimBusy} onClick={resetScan}><RotateCcw size={13} />Reset scan</button>
               </details>
             </section>
@@ -992,7 +994,7 @@ export default function Home() {
             ))}
             <div className="coverage-footnotes">
               <p>
-                <strong>Available fees first.</strong> Connecting reads balances and discovers fee positions at a fixed block with 20 confirmations. Past payouts load only when you open Payout history. Each pass stops automatically; Continue scan resumes the selected view. Partial scans show only what has been found so far.
+                <strong>Available fees first.</strong> Connecting reads balances and discovers fee positions at a fixed block with 20 confirmations. Past payouts load only when you open Payout history. Scanning continues automatically until every selected source completes. Pause and resume at any time; progress is saved after each completed page. Partial scans show only what has been found so far. 100% applies to the supported routes for the selected view at its snapshot block, subject to each source’s exclusions and index delays.
               </p>
               <p>
                 <strong>Available and unswept are separate.</strong> Bags previews the sweep included
@@ -1001,7 +1003,7 @@ export default function Home() {
                 are never converted into a pretend combined currency.
               </p>
               <p>
-                <strong>Progress stays in this browser.</strong> Scan results, wallet addresses, source choices and signed progress cursors are stored locally per wallet so you can resume after refresh or reconnect. Reset scan removes the connected wallet’s saved progress. No wallet address is put in this site’s URLs, application logs, analytics or a database. O1 and Bankr discovery send your address to their wallet indexes through the server; Bags registry discovery and onchain queries go to the chain provider. Hosting logs depend on the operator’s settings. Signed scan checkpoints survive cursor expiry. Returning refreshes known balances and discovery; unfinished older ranges stay available through Continue scan. A changed chain snapshot or signing key can require a reset.
+                <strong>Progress stays in this browser.</strong> Scan results, wallet addresses, source choices and signed progress cursors are stored locally per wallet so you can resume after refresh or reconnect. Reset scan removes the connected wallet’s saved progress. No wallet address is put in this site’s URLs, application logs, analytics or a database. O1 and Bankr discovery send your address to their wallet indexes through the server; Bags registry discovery and onchain queries go to the chain provider. Hosting logs depend on the operator’s settings. Signed scan checkpoints survive cursor expiry. Returning refreshes known balances and discovery, then automatically finishes older unchecked ranges. A changed chain snapshot or signing key can require a reset.
               </p>
               <p>
                 <strong>More adapters come later.</strong> Flap, pools.trade, PAIR and other

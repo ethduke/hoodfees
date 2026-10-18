@@ -19,6 +19,17 @@ Historical scans are resumable and bounded. Keep SCAN_CURSOR_SECRET stable acros
 server instances for cursor continuity. Results are taken at a fixed confirmed
 block and discarded if its hash changes. An incomplete scan never means zero fees.
 
+The browser scans until every selected source reports complete coverage. It
+rotates through bounded pages with one request in flight and a one-second delay
+after each page. Rate limits pause the entire queue; temporary provider/index
+outages retry with exponential backoff capped at 30 seconds (or the provider's
+Retry-After, up to five minutes). Pause aborts the active request and cooldown.
+Every completed page and queued refresh is saved locally, so Resume scan and
+reconnect retain progress. Refresh checks new activity and then drains unfinished
+older discovery. Permanent verification/capacity errors leave that source visibly
+incomplete while other sources finish. 100% describes supported checks at the
+snapshot, subject to the documented exclusions and upstream index delays.
+
 Coverage: O1 current, Tax and historical fee escrows; Bags v2 creator/partner
 fee-shares; Bankr-indexed original creator positions in the shared Doppler manager
 and the reviewed quote-only hook fee ledger; the

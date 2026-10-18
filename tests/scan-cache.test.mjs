@@ -35,6 +35,17 @@ test("browser progress restores independent fee/history cursors, rows and source
   assert.equal(saved.chainId,4663);
   assert.equal(cache.load(other),null);
 });
+test("paused refreshes remain unfinished after reload even when the previous snapshot was complete", () => {
+  const {cache,host}=setup(), input=progress();
+  input.balances.o1.result.coverage={complete:true,percent:100,pending:0};
+  input.balances.o1.result.cursor=null;
+  input.balances.o1.refreshPending=true;
+  cache.save(wallet,input);
+  const saved=new ScanCache(host).load(wallet);
+  assert.equal(saved.balances.o1.refreshPending,true);
+  assert.equal(saved.balances.o1.result.checkpoint,"durable.balances");
+  assert.equal(saved.balances.o1.result.coverage.complete,true);
+});
 test("reset removes only the chosen wallet and does not erase unrelated browser data", () => {
   const {cache,values}=setup();
   cache.save(wallet,progress());cache.save(other,progress());values.set("unrelated","kept");
