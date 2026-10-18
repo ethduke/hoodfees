@@ -20,7 +20,7 @@ import { claimKey } from "../lib/fees/claim-plan.mjs";
 import { WalletAdapter } from "../lib/wallet/adapter.mjs";
 import { ScanCache } from "../lib/wallet/scan-cache.mjs";
 import { SOURCE_INFO } from "../lib/fees/catalog.mjs";
-import { compactAmount, mergeRows, totals } from "../lib/fees/model.mjs";
+import { compactAmount, mergeRows, uniqueFeeRows, totals } from "../lib/fees/model.mjs";
 const SCAN_PASS_REQUESTS = 6;
 const SCAN_PASS_DURATION = 20_000;
 type ScanScope = "balances" | "history";
@@ -54,6 +54,7 @@ type FeeRow = {
   earmarkedRaw?: string;
   position?: string;
   claimHandle?: string;
+  sweptRaw?: string;
 };
 type ClaimState = {
   phase: string; error?: string; row?: FeeRow; owner?: string; hash?: string; confirmations?: number;
@@ -78,14 +79,14 @@ type Result = {
   checkpoint?: string;
   resetBalances?: boolean;
   updatesComplete?: boolean;
-  discovery?: "wallet-index";
+  discovery?: "wallet-index" | "onchain-registry";
   snapshotCursor: string;
   source: string;
   snapshot: { number: number; hash: string; timestamp: number };
   balances: FeeRow[];
   history: FeeRow[];
   warnings: string[];
-  coverage: { complete: boolean; percent: number; pending: number; blocksChecked?: number; blocksTotal?: number; indexPages?: number };
+  coverage: { complete: boolean; percent: number; pending: number; blocksChecked?: number; blocksTotal?: number; indexPages?: number; positionsChecked?: number; positionsTotal?: number };
   cursor: string | null;
 };
 type SourceState = {
@@ -112,9 +113,11 @@ const errors: Record<string, string> = {
   response_limit: "This historical page exceeds the provider limit.",
   position_limit: "This wallet exceeds the current scan capacity. The result remains incomplete.",
   page_limit: "This page exceeded its read budget. Continue to retry.",
-  index_unavailable: "The O1 wallet index is unavailable. Saved progress is kept; try again shortly.",
+  index_unavailable: "The launchpad’s wallet index is unavailable. Saved progress is kept; try again shortly.",
 };
 const warningText: Record<string, string> = {
+  bankr_unreviewed_route: "Some Bankr positions use a hook or manager outside the reviewed deployments. Those fees are excluded.",
+  bags_unreviewed_claim: "Some matching claim events are outside the reviewed Bags v2 deployments and were excluded.",
   o1_unreviewed_escrow: "The O1 index returned an escrow outside the reviewed contract set. Its fees are excluded from claims here.",
   migrated_pool: "Migrated Doppler pools are outside this adapter’s coverage.",
   other_doppler_route: "Other integrations on the shared manager were excluded.",
@@ -189,91 +192,6 @@ export default function Home() {
     cancelWork();
     setRunning(false);
   }
-  useEffect(() => {
-    cache.current = new ScanCache(window);
-    const claimController = new ClaimController({
-      getSession: () => adapter.current?.session,
-      notify: (state: ClaimState) => setClaimState(state),
-      refresh: (confirmation: { history: FeeRow[]; snapshotCursor: string }, address: string) => {
-        stop();
-        const seeded: Record<string, SourceState> = {};
-        for (const [id, state] of Object.entries(historyLatest.current))
-          seeded[id] = { ...state, history: state.history };
-        for (const row of confirmation.history) {
-          const source = seeded[row.source] ?? { balances: [], history: [], pages: 0 };
-          source.history = mergeRows([...source.history, row]) as FeeRow[];
-          seeded[row.source] = source;
-        }
-        publish(seeded, "history");
-        historyNeedsUpdate.current = true;
-        setActiveTab("unclaimed");
-        void run(address, true, confirmation.snapshotCursor);
-      },
-    });
-    claims.current = claimController;
-    const connection = new WalletAdapter(window, (event: WalletEvent) => {
-      if (event.type === "providers") { setWalletOptions(event.options); return; }
-      claimController.contextChanged();
-      stop();
-      cacheAddress.current = "";
-      setSavedAt(null);
-      setStorageError(false);
-      publish({}, "history");
-      historyStarted.current = false;
-      historyNeedsUpdate.current = false;
-      setActiveTab("unclaimed");
-      if (event.type === "connecting") {
-        stop();
-        publish({});
-        setWallet("");
-        setConnecting(true);
-        setConnectionNotice("Approve the connection in your wallet. Available fees are checked first; payout history loads when opened.");
-      } else if (event.type === "connected") {
-        stop();
-        publish({});
-        const saved = cache.current?.load(event.address);
-        cacheAddress.current = event.address;
-        setWallet(event.address);
-        setConnecting(false);
-        setWalletMenu(false);
-        setFilter("all");
-        if (saved) {
-          selectedRef.current = new Set(saved.selected as string[]);
-          setSelected(new Set(saved.selected as string[]));
-          historyStarted.current = saved.historyStarted;
-          historyNeedsUpdate.current = saved.historyStarted;
-          publish(saved.balances as Record<string, SourceState>, "balances", false);
-          publish(saved.history as Record<string, SourceState>, "history", false);
-          setSavedAt(saved.savedAt);
-          setConnectionNotice("Saved progress restored. Refreshing known balances and checking new blocks. Older coverage is kept; payout history stays on demand.");
-          if (selectedRef.current.size) void run(event.address, true);
-          else setNotice("Choose a scan source to refresh saved progress.");
-        } else if (selectedRef.current.size) {
-          setConnectionNotice(`${event.switched ? "Account changed" : "Wallet connected"}. Checking available fees first. Open Payout history to load past claims.`);
-          void run(event.address, true);
-        }
-        else setNotice("Choose at least one scan source to start checking fees.");
-      } else {
-        stop();
-        publish({});
-        setWallet("");
-        setConnecting(false);
-        setNotice("");
-        setConnectionNotice(event.type === "error" ? walletErrors[event.code] ?? walletErrors.unavailable : "Wallet disconnected. Scanning stopped; saved progress stays in this browser.");
-      }
-    });
-    adapter.current = connection;
-    connection.start();
-    return () => {
-      claimController.dispose();
-      claims.current = null;
-      connection.dispose();
-      adapter.current = null;
-      cancelWork();
-    };
-    // Wallet events use current scan state and source selections through refs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
   function connectDefault() {
     adapter.current?.discoverLegacy();
     const preferred = adapter.current?.options.find((option) => option.rabby);
@@ -334,6 +252,8 @@ export default function Home() {
     const renewed = new Set<string>(), settled = new Set<string>(), readSources = new Set<string>();
     let requests = 0;
     let timedOut = false;
+    // This scan starts from wallet/UI events after render.
+    // eslint-disable-next-line react-hooks/purity
     const deadline = Date.now() + SCAN_PASS_DURATION;
     const timeout = setTimeout(() => {
       if (token === generation.current && active.current) {
@@ -502,17 +422,101 @@ export default function Home() {
     setNotice("Scan paused while your claim is prepared. Review the transaction in your wallet.");
     void claims.current?.begin(row);
   }
+  useEffect(() => {
+    cache.current = new ScanCache(window);
+    const claimController = new ClaimController({
+      getSession: () => adapter.current?.session,
+      notify: (state: ClaimState) => setClaimState(state),
+      refresh: (confirmation: { history: FeeRow[]; snapshotCursor: string }, address: string) => {
+        stop();
+        const seeded: Record<string, SourceState> = {};
+        for (const [id, state] of Object.entries(historyLatest.current))
+          seeded[id] = { ...state, history: state.history };
+        for (const row of confirmation.history) {
+          const source = seeded[row.source] ?? { balances: [], history: [], pages: 0 };
+          source.history = mergeRows([...source.history, row]) as FeeRow[];
+          seeded[row.source] = source;
+        }
+        publish(seeded, "history");
+        historyNeedsUpdate.current = true;
+        setActiveTab("unclaimed");
+        void run(address, true, confirmation.snapshotCursor);
+      },
+    });
+    claims.current = claimController;
+    const connection = new WalletAdapter(window, (event: WalletEvent) => {
+      if (event.type === "providers") { setWalletOptions(event.options); return; }
+      claimController.contextChanged();
+      stop();
+      cacheAddress.current = "";
+      setSavedAt(null);
+      setStorageError(false);
+      publish({}, "history");
+      historyStarted.current = false;
+      historyNeedsUpdate.current = false;
+      setActiveTab("unclaimed");
+      if (event.type === "connecting") {
+        stop();
+        publish({});
+        setWallet("");
+        setConnecting(true);
+        setConnectionNotice("Approve the connection in your wallet. Available fees are checked first; payout history loads when opened.");
+      } else if (event.type === "connected") {
+        stop();
+        publish({});
+        const saved = cache.current?.load(event.address);
+        cacheAddress.current = event.address;
+        setWallet(event.address);
+        setConnecting(false);
+        setWalletMenu(false);
+        setFilter("all");
+        if (saved) {
+          selectedRef.current = new Set(saved.selected as string[]);
+          setSelected(new Set(saved.selected as string[]));
+          historyStarted.current = saved.historyStarted;
+          historyNeedsUpdate.current = saved.historyStarted;
+          publish(saved.balances as Record<string, SourceState>, "balances", false);
+          publish(saved.history as Record<string, SourceState>, "history", false);
+          setSavedAt(saved.savedAt);
+          setConnectionNotice("Saved progress restored. Refreshing known balances and checking new blocks. Older coverage is kept; payout history stays on demand.");
+          if (selectedRef.current.size) void run(event.address, true);
+          else setNotice("Choose a scan source to refresh saved progress.");
+        } else if (selectedRef.current.size) {
+          setConnectionNotice(`${event.switched ? "Account changed" : "Wallet connected"}. Checking available fees first. Open Payout history to load past claims.`);
+          void run(event.address, true);
+        }
+        else setNotice("Choose at least one scan source to start checking fees.");
+      } else {
+        stop();
+        publish({});
+        setWallet("");
+        setConnecting(false);
+        setNotice("");
+        setConnectionNotice(event.type === "error" ? walletErrors[event.code] ?? walletErrors.unavailable : "Wallet disconnected. Scanning stopped; saved progress stays in this browser.");
+      }
+    });
+    adapter.current = connection;
+    connection.start();
+    return () => {
+      claimController.dispose();
+      claims.current = null;
+      connection.dispose();
+      adapter.current = null;
+      cancelWork();
+    };
+    // Wallet events use current scan state and source selections through refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const included = SOURCE_INFO.filter((s) => selected.has(s.id));
   const scanStates = activeTab === "history" ? historyStates : states;
   const hasSourceErrors = included.some((source) => scanStates[source.id]?.error);
-  const allBalances = included.flatMap((s) => states[s.id]?.balances ?? []);
+  const allBalances = uniqueFeeRows(included.flatMap((s) => states[s.id]?.balances ?? [])) as FeeRow[];
   const available = allBalances.filter((r) => r.kind === "available" && BigInt(r.raw) > 0n);
   const sourcesWithFees = new Set(SOURCE_INFO.filter((source) =>
     wallet && states[source.id]?.balances.some((row) => row.kind === "available" && BigInt(row.raw) > 0n),
   ).map((source) => source.id));
   const pending = allBalances.filter((r) => r.kind !== "available" && BigInt(r.raw) > 0n);
-  const claimed = included
-    .flatMap((s) => historyStates[s.id]?.history ?? [])
+  const claimed = (uniqueFeeRows(included.flatMap((s) => historyStates[s.id]?.history ?? [])) as FeeRow[])
     .sort((a, b) => (b.block ?? 0) - (a.block ?? 0));
   const complete =
     wallet && included.length > 0 &&
@@ -531,7 +535,11 @@ export default function Home() {
   // Each source has a confirmed frozen snapshot. Cross-source aggregate amounts
   // are only shown when the snapshots coincide; otherwise show separate assets.
   const resultRows = activeTab === "history" ? claimed : allBalances.filter((r) => showZero || BigInt(r.raw) > 0n);
-  const rows = resultRows.filter((r) => filter === "all" || r.source === filter);
+  // A source-specific view still shows that adapter's shared positions. Only
+  // the combined view and totals collapse Bankr/Long overlaps.
+  const rows = filter === "all" ? resultRows : activeTab === "history"
+    ? included.filter((s) => s.id === filter).flatMap((s) => historyStates[s.id]?.history ?? []).sort((a,b)=>(b.block ?? 0)-(a.block ?? 0))
+    : included.filter((s) => s.id === filter).flatMap((s) => states[s.id]?.balances ?? []).filter((r) => showZero || BigInt(r.raw) > 0n);
   return (
     <div className="app-shell">
       <div className="main-shell">
@@ -665,12 +673,14 @@ export default function Home() {
                   {included.map((source) => {
                     const state = scanStates[source.id], result = state?.result;
                     const indexed = result?.discovery === "wallet-index";
+                    const registry = result?.discovery === "onchain-registry" && activeTab !== "history";
                     return <li key={source.id}>
                       <div><strong>{source.name}</strong><span>{state?.error ? "Needs attention" : !result ? "Not checked yet"
-                        : indexed ? result.coverage.complete ? "Indexed positions checked" : `${result.coverage.indexPages ?? 0} index pages checked · more to check`
+                        : registry ? `${result.coverage.positionsChecked ?? 0} / ${result.coverage.positionsTotal ?? 0} registry entries checked`
+                        : indexed && activeTab !== "history" ? result.coverage.complete ? "Indexed positions checked" : "Indexed positions found · verifying fees"
                         : `${result.coverage.percent.toFixed(2)}% of event ranges checked`}</span></div>
-                      {result && <progress aria-label={`${source.name} ${indexed ? "wallet index" : "event range"} progress`} max={100}
-                        value={indexed && !result.coverage.complete ? undefined : result.coverage.percent} />}
+                      {result && <progress aria-label={`${source.name} ${registry ? "registry" : indexed ? "wallet index" : "event range"} progress`} max={100}
+                        value={indexed && activeTab !== "history" && !result.coverage.complete ? undefined : result.coverage.percent} />}
                       {result && <small>{state.pages} scan requests · {result.coverage.pending} records awaiting verification · <a href={explorer("block", String(result.snapshot.number))} target="_blank" rel="noreferrer">Block {result.snapshot.number.toLocaleString()}<ArrowUpRight size={10} /></a></small>}
                     </li>;
                   })}
@@ -803,7 +813,7 @@ export default function Home() {
                               className={`status-pill ${row.kind === "available" ? "available" : "pending"}`}
                             >
                               {row.kind === "available"
-                                ? "Available"
+                                ? row.sweptRaw && BigInt(row.sweptRaw) > 0n ? "Available with sweep" : "Available"
                                 : row.kind === "conversion-needed"
                                   ? "Needs conversion"
                                   : "Unswept estimate"}
@@ -965,8 +975,9 @@ export default function Home() {
             <span className="eyebrow">KNOW WHAT’S COVERED</span>
             <h2 id="coverage-title">A clear view of your fees.</h2>
             <p>
-              The first release reuses fungun’s reviewed accounting. Sources are checked against
-              pinned deployed bytecode on Robinhood Chain.
+              Sources are checked against pinned deployed bytecode on Robinhood Chain.
+              Bags checks its proxy implementations too. Bankr and Long share Doppler accounting;
+              overlapping positions and payouts are counted once.
             </p>
             {SOURCE_INFO.map((s) => (
               <article key={s.id}>
@@ -983,17 +994,18 @@ export default function Home() {
                 <strong>Available fees first.</strong> Connecting reads balances and discovers fee positions at a fixed block with 20 confirmations. Past payouts load only when you open Payout history. Each pass stops automatically; Continue scan resumes the selected view. Partial scans show only what has been found so far.
               </p>
               <p>
-                <strong>Available and unswept are separate.</strong> Pending pons fees may need
+                <strong>Available and unswept are separate.</strong> Bags previews the sweep included
+                in its claim; payouts arrive as WETH. Pending pons fees may need
                 collection or conversion. Buyback earmarks can change the final payout. Asset totals
                 are never converted into a pretend combined currency.
               </p>
               <p>
-                <strong>Progress stays in this browser.</strong> Scan results, wallet addresses, source choices and signed progress cursors are stored locally per wallet so you can resume after refresh or reconnect. Reset scan removes the connected wallet’s saved progress. No wallet address is put in this site’s URLs, application logs, analytics or a database. O1 discovery sends your address to O1’s wallet index through the server; onchain queries go to the chain provider. Hosting logs depend on the operator’s settings. Signed scan checkpoints survive cursor expiry. Returning refreshes known balances and discovery; unfinished older ranges stay available through Continue scan. A changed chain snapshot or signing key can require a reset.
+                <strong>Progress stays in this browser.</strong> Scan results, wallet addresses, source choices and signed progress cursors are stored locally per wallet so you can resume after refresh or reconnect. Reset scan removes the connected wallet’s saved progress. No wallet address is put in this site’s URLs, application logs, analytics or a database. O1 and Bankr discovery send your address to their wallet indexes through the server; Bags registry discovery and onchain queries go to the chain provider. Hosting logs depend on the operator’s settings. Signed scan checkpoints survive cursor expiry. Returning refreshes known balances and discovery; unfinished older ranges stay available through Continue scan. A changed chain snapshot or signing key can require a reset.
               </p>
               <p>
-                <strong>More adapters come later.</strong> Bags, Flap, pools.trade, PAIR and other
+                <strong>More adapters come later.</strong> Flap, pools.trade, PAIR and other
                 verified platforms are not included in this first release. pons’ older unreviewed
-                stacks, holder dividends and buyback vesting remain outside coverage.
+                stacks, Bags v1, holder dividends and buyback vesting remain outside coverage.
               </p>
               <p>
                 <strong>You approve every claim.</strong> Scanning only reads the chain. Claiming sends one transaction after you review it and approve it in your wallet. Pool claims collect both assets together. Unswept estimates cannot be claimed here.

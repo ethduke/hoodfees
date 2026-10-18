@@ -19,10 +19,35 @@ Historical scans are resumable and bounded. Keep SCAN_CURSOR_SECRET stable acros
 server instances for cursor continuity. Results are taken at a fixed confirmed
 block and discarded if its hash changes. An incomplete scan never means zero fees.
 
-Coverage in this first release: O1 current, Tax and historical fee escrows; the
+Coverage: O1 current, Tax and historical fee escrows; Bags v2 creator/partner
+fee-shares; Bankr-indexed original creator positions in the shared Doppler manager
+and the reviewed quote-only hook fee ledger; the
 shared Long/Longbow locked-pool manager; pons v2 fee escrow plus curve/hook discovery;
 pons v1 lockers. Migrated Doppler pools and separate Long hook payouts are outside
 coverage. Each source reports its exclusions and scan progress in the interface.
+
+Bags needs no API key. Its registry is checked in batches of 128 tokens, followed
+by bounded recipient checks. Available WETH includes a read-only atomic preview
+of the hook sweep followed by the recipient's ledger balance; a failed sweep
+leaves only already-notified fees available. Claims call claim(false) on the
+factory-authenticated fee-share and pay WETH. The factory's ERC1967 implementation,
+fee-share beacon implementation, proxy runtime and hook are pinned independently.
+An upgrade blocks the adapter until the new implementation is reviewed.
+
+Bankr's public creator index supplies identities only. Current shares, pool keys,
+fee checkpoints and simulations determine amounts and claim targets onchain.
+Both token assets are collected together, including for stock-paired pools.
+The core manager's collection path does not call the separate trading hook's
+swap callback. The reviewed quote-only ledger additionally authenticates its
+initializer and pool key. Transferred-in beneficiaries missing from Bankr's
+index, other hook versions, migrated pools and vesting are outside coverage.
+Shared Bankr/Long balances and payout events have identical identities and are
+deduplicated before totals. Registry and history checkpoints retain unfinished
+work and only append newly created entries/ranges on refresh.
+
+Bankr discovery sends the requested address to api.bankr.bot through the server.
+Bags registry discovery only contacts the chain provider. Upstream index amounts
+and transaction payloads are never used as claim authority.
 
 Wallet connection uses account access only, with Rabby preferred. Scanning never
 requests a transaction. Each available fee has a separately reviewed claim action;
