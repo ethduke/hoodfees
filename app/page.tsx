@@ -14,9 +14,6 @@ import {
   X,
   RefreshCw,
   RotateCcw,
-  Radar,
-  LayoutGrid,
-  CircleHelp,
 } from "lucide-react";
 import { ClaimController } from "../lib/wallet/claims.mjs";
 import { claimKey } from "../lib/fees/claim-plan.mjs";
@@ -88,7 +85,7 @@ type Result = {
   balances: FeeRow[];
   history: FeeRow[];
   warnings: string[];
-  coverage: { complete: boolean; percent: number; pending: number; blocksChecked?: number; blocksTotal?: number };
+  coverage: { complete: boolean; percent: number; pending: number; blocksChecked?: number; blocksTotal?: number; indexPages?: number };
   cursor: string | null;
 };
 type SourceState = {
@@ -330,8 +327,7 @@ export default function Home() {
           if (settled.has(id) || (existing?.result?.coverage.complete && !updatesWanted.has(id)) || existing?.error) continue;
           didWork = true;
           requests++;
-          const coverage = existing?.result?.coverage;
-          setNotice(`Checking ${SOURCE_INFO.find((source) => source.id === id)?.name}: ${scope === "history" ? "payout history" : "available fees"}. This pass stops after ${SCAN_PASS_REQUESTS} pages or ${SCAN_PASS_DURATION / 1000} seconds.${coverage?.pending ? ` ${coverage.pending} candidate records awaiting verification.` : ""}`);
+          setNotice(`Checking ${SOURCE_INFO.find((source) => source.id === id)?.name}: ${scope === "history" ? "payout history" : "available fees"}.`);
           controller.current = new AbortController();
           try {
             const saved = existing?.result;
@@ -454,6 +450,7 @@ export default function Home() {
     else next.add(id);
     selectedRef.current = next;
     setSelected(next);
+    setFilter("all");
     saveProgress();
     if (wallet && next.size) setNotice("Scan sources updated. Choose Continue scan to check your selection.");
     else if (wallet) { stop(); setNotice("Choose at least one scan source to start checking fees."); }
@@ -502,20 +499,15 @@ export default function Home() {
   );
   const found = totals(available) as FeeRow[],
     paid = totals(claimed) as FeeRow[];
-  const pct = included.length
-    ? included.reduce((n, s) => n + (scanStates[s.id]?.result?.coverage.percent ?? 0), 0) /
-      included.length
-    : 0;
   const snapshots = included.flatMap((s) =>
     states[s.id]?.result ? [states[s.id].result!.snapshot] : [],
   );
   const snapshotsMatch =
-    snapshots.length > 0 && snapshots.every((s) => s.hash === snapshots[0].hash);
+    snapshots.length > 0 && snapshots.length === included.length && snapshots.every((s) => s.hash === snapshots[0].hash);
   // Each source has a confirmed frozen snapshot. Cross-source aggregate amounts
   // are only shown when the snapshots coincide; otherwise show separate assets.
-  const rows = (
-    activeTab === "history" ? claimed : allBalances.filter((r) => showZero || BigInt(r.raw) > 0n)
-  ).filter((r) => filter === "all" || r.source === filter);
+  const resultRows = activeTab === "history" ? claimed : allBalances.filter((r) => showZero || BigInt(r.raw) > 0n);
+  const rows = resultRows.filter((r) => filter === "all" || r.source === filter);
   return (
     <div className="app-shell">
       <div className="main-shell">
@@ -538,30 +530,16 @@ export default function Home() {
           </div>
         </header>
         <div className="terminal-frame">
-          <aside className="terminal-rail" aria-label="Workspace navigation">
-            <a className="rail-item active" href="#harvest" aria-label="Overview"><LayoutGrid size={18} /></a>
-            <a className="rail-item" href="#fees" aria-label="Available fees" onClick={() => changeTab("unclaimed")}><Wallet size={18} /></a>
-            <a className="rail-item" href="#fees" aria-label="Payout history" onClick={() => changeTab("history")}><History size={18} /></a>
-            <button className="rail-item" aria-label="Reviewed sources" onClick={() => setInfo(true)}><ShieldCheck size={18} /></button>
-            <span className="rail-caption">YOUR FEES. YOUR CALL.</span>
-            <button className="rail-item rail-help" aria-label="Coverage details" onClick={() => setInfo(true)}><CircleHelp size={18} /></button>
-          </aside>
         <main id="harvest">
           <section className="page-heading" aria-labelledby="hero-title">
             <div>
-              <span className="eyebrow"><span className="green-dot" /> {running ? "SCANNING. DISCOVERING. YOURS." : wallet ? "CONNECTED. DISCOVERED. YOURS." : "YOUR FEES. YOUR CALL."}</span>
-              <h1 id="hero-title">Make every <span>fee count.</span></h1>
-              <p>Your launchpad fees, together at last. Find what’s ready. Follow what’s paid.</p>
-            </div>
-            <div className="snapshot-note">
-              <span>{snapshotsMatch ? "CONFIRMED SNAPSHOT" : "ROBINHOOD CHAIN MAINNET"}</span>
-              {snapshotsMatch ? <a href={explorer("block", String(snapshots[0].number))} target="_blank" rel="noreferrer">Block {snapshots[0].number.toLocaleString()} <ArrowUpRight size={11} /></a> : <small>Chain 4663 · 20-block confirmations</small>}
+              <h1 id="hero-title">Your launchpad <span>fees.</span></h1>
+              <p>Find available fees. Track confirmed payouts.</p>
             </div>
           </section>
           <section className="summary-grid" aria-label="Wallet summary">
             <Summary
               label="AVAILABLE TO HARVEST"
-              onViewAvailable={() => changeTab("unclaimed")}
               values={found}
               wallet={wallet}
               helper={
@@ -589,33 +567,12 @@ export default function Home() {
               }
               icon={<History size={17} />}
             />
-            <div className="summary-card">
-              <span className="summary-label">
-                {activeTab === "history" ? "HISTORY COVERAGE" : "FEE DISCOVERY"}
-                <Radar size={17} />
-              </span>
-              <div className="summary-value">
-                {wallet ? (
-                  <>{complete ? "Complete" : pct < 0.01 ? "Started" : `${pct.toFixed(1)}%`}</>
-                ) : (
-                  <span className="muted-number">—</span>
-                )}
-              </div>
-              <p>
-                {wallet
-                  ? `${included.length} source groups · ${included.reduce((n, s) => n + (scanStates[s.id]?.pages ?? 0), 0)} pages checked`
-                  : "Connect your wallet to start scanning"}
-              </p>
-              <div className="mini-progress">
-                <span style={{ width: `${pct}%` }} />
-              </div>
-            </div>
           </section>
           <section className="lookup-panel" aria-label="Scan sources">
-            <div className="connection-status" role="status" aria-live="polite" aria-atomic="true">
+            {!wallet && <div className="connection-status" role="status" aria-live="polite" aria-atomic="true">
               <ShieldCheck size={16} />
               <div><strong>{connectionNotice}</strong></div>
-            </div>
+            </div>}
             <div className="source-selector">
               <span>SCAN SOURCES</span>
               <div>
@@ -642,53 +599,61 @@ export default function Home() {
             </div>
           </section>
           {wallet && (
-            <section className="scan-strip" aria-live="polite">
-              <div>
-                <span className={running ? "pulse-dot" : "green-dot"} />
-                <strong>
-                  {running
-                    ? "Checking a short batch…"
-                    : complete
-                      ? activeTab === "history" ? "Payout history loaded" : "Available-fee checks complete"
-                      : !included.length ? "Choose scan sources" : hasSourceErrors ? "Scan needs attention" : "Scan paused"}
-                </strong>
-                <p>
-                  {notice ||
-                    (activeTab === "history" ? "Payout history loads in short passes. Continue to check older payouts." : "Available fees use direct contract reads and position discovery. Payout history loads only when opened.")}
-                  {` ${available.length} available fee positions · ${claimed.length} verified payouts found.`}
-                  {running && ` ${pct.toFixed(2)}% of event ranges searched · ${included.reduce((n, s) => n + (scanStates[s.id]?.pages ?? 0), 0)} pages checked.`}
-                  {storageError ? " Browser storage is unavailable. Progress may not survive a refresh." : savedAt ? " Saved in this browser. Checkpoints survive cursor expiry; Refresh checks new blocks and current balances." : ""}
-                </p>
-              </div>
-              <div className="scan-actions">
-                <button className="secondary-button" disabled={claimBusy} onClick={resetScan}>
-                  <RotateCcw size={14} />Reset scan
-                </button>
-                {running ? (
-                  <button className="secondary-button" onClick={() => { stop(); setNotice("Scan paused. Your verified results are kept. Continue whenever you are ready."); }}>
-                    <Pause size={14} />
-                    Pause
-                  </button>
-                ) : (
-                  <>
-                    <button
-                      className="icon-button"
-                      title="Refresh balances and check new blocks"
-                      aria-label="Refresh balances and check new blocks"
-                      disabled={!included.length || claimBusy}
-                      onClick={() => void run(wallet, true, undefined, activeTab === "history" ? "history" : "balances")}
-                    >
-                      <RefreshCw size={16} />
+            <section className="scan-strip" aria-label="Scan status">
+              <div className="scan-overview">
+                <div className="scan-summary" role="status" aria-live="polite" aria-atomic="true">
+                  <span className={running ? "pulse-dot" : "green-dot"} />
+                  <strong>{running ? "Checking a short batch…" : complete
+                    ? activeTab === "history" ? "Payout history loaded" : "Available-fee checks complete"
+                    : !included.length ? "Choose scan sources" : hasSourceErrors ? "Scan needs attention" : "Scan paused"}</strong>
+                  <p>{notice || (activeTab === "history"
+                    ? "Continue to check older payouts."
+                    : "Payout history loads only when opened.")}</p>
+                </div>
+                <div className="scan-actions">
+                  {running ? (
+                    <button className="secondary-button" onClick={() => { stop(); setNotice("Your results are kept. Continue whenever you are ready."); }}>
+                      <Pause size={14} />Pause
                     </button>
-                    {!complete && included.length > 0 && (
-                      <button className="secondary-button" disabled={claimBusy} onClick={continueScan}>
-                        Continue scan
-                        <ArrowRight size={14} />
+                  ) : (
+                    <>
+                      <button className="secondary-button" disabled={!included.length || claimBusy}
+                        title="Refresh balances and discovery for the selected view"
+                        onClick={() => void run(wallet, true, undefined, activeTab === "history" ? "history" : "balances")}>
+                        <RefreshCw size={14} />Refresh
                       </button>
-                    )}
-                  </>
-                )}
+                      {!complete && included.length > 0 && (
+                        <button className="secondary-button" disabled={claimBusy} onClick={continueScan}>
+                          Continue scan<ArrowRight size={14} />
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
+              <details className="scan-details">
+                <summary>Scan details<span>{storageError ? "Storage unavailable" : savedAt ? "Saved in this browser" : ""}</span></summary>
+                <p>{connectionNotice}</p>
+                <p>{storageError ? "Progress may not survive a refresh."
+                  : "Saved checkpoints survive cursor expiry. Refresh updates known balances and discovery; Continue scan resumes unfinished work."}
+                  {` Each pass stops after ${SCAN_PASS_REQUESTS} requests or ${SCAN_PASS_DURATION / 1000} seconds.`}</p>
+                <ul className="source-progress">
+                  {included.map((source) => {
+                    const state = scanStates[source.id], result = state?.result;
+                    const indexed = result?.discovery === "wallet-index";
+                    return <li key={source.id}>
+                      <div><strong>{source.name}</strong><span>{state?.error ? "Needs attention" : !result ? "Not checked yet"
+                        : indexed ? result.coverage.complete ? "Indexed positions checked" : `${result.coverage.indexPages ?? 0} index pages checked · more to check`
+                        : `${result.coverage.percent.toFixed(2)}% of event ranges checked`}</span></div>
+                      {result && <progress aria-label={`${source.name} ${indexed ? "wallet index" : "event range"} progress`} max={100}
+                        value={indexed && !result.coverage.complete ? undefined : result.coverage.percent} />}
+                      {result && <small>{state.pages} scan requests · {result.coverage.pending} records awaiting verification · <a href={explorer("block", String(result.snapshot.number))} target="_blank" rel="noreferrer">Block {result.snapshot.number.toLocaleString()}<ArrowUpRight size={10} /></a></small>}
+                    </li>;
+                  })}
+                </ul>
+                <p>Scans use snapshots with 20 confirmations. {snapshotsMatch ? "Selected fee sources share a snapshot." : "Source snapshots may differ."}</p>
+                <button className="text-button reset-scan" disabled={claimBusy} onClick={resetScan}><RotateCcw size={13} />Reset scan</button>
+              </details>
             </section>
           )}
           {claimState.phase !== "idle" && (claimState.owner === wallet || claimBusy) && (
@@ -710,7 +675,6 @@ export default function Home() {
               {claimState.error === "confirmation_pending" && <button className="secondary-button" onClick={() => void claims.current?.watch()}>Check confirmation</button>}
             </section>
           )}
-          <div className="section-heading results-title"><div><h2>Your next harvest.</h2><p>Available balances and a clear record of every payout.</p></div><button className="text-button" onClick={() => setInfo(true)}>What’s covered <ArrowUpRight size={15} /></button></div>
           <section className="results-panel" id="fees" aria-label="Fee balances and payout history">
             <div className="results-header">
               <div className="tabs" role="tablist" aria-label="Fee results">
@@ -732,7 +696,7 @@ export default function Home() {
                 </button>
               </div>
               <div className="table-controls">
-                {activeTab === "unclaimed" && wallet && (
+                {activeTab === "unclaimed" && wallet && allBalances.length > 0 && (
                   <label className="zero-toggle">
                     <input
                       type="checkbox"
@@ -742,7 +706,7 @@ export default function Home() {
                     Show zero
                   </label>
                 )}
-                <label className="filter-select">
+                {(resultRows.length > 0 || filter !== "all") && <label className="filter-select">
                   <select
                     aria-label="Filter by launchpad"
                     value={filter}
@@ -756,7 +720,7 @@ export default function Home() {
                     ))}
                   </select>
                   <ChevronDown size={13} />
-                </label>
+                </label>}
               </div>
             </div>
             {rows.length ? (
@@ -873,6 +837,7 @@ export default function Home() {
                 <h2>
                   {!wallet
                     ? "Your fees are out there."
+                    : filter !== "all" && resultRows.length > 0 ? "No matching results"
                     : running
                       ? "Looking for your fees…"
                       : complete && (activeTab !== "history" || !historyIncomplete)
@@ -882,6 +847,7 @@ export default function Home() {
                 <p>
                   {!wallet
                     ? "Connect your wallet to discover unclaimed fees\nand see your verified payout history."
+                    : filter !== "all" && resultRows.length > 0 ? "Choose another launchpad or All launchpads to see the other results."
                     : complete && (activeTab !== "history" || !historyIncomplete)
                       ? activeTab === "history" ? "No matching payouts in the covered contracts. Check coverage for excluded routes." : "No positive balances found in the covered contracts. Confirmed claims appear in Payout history."
                       : "Keep scanning to discover older positions. Unread pages and failed reads remain unknown."}
@@ -1011,7 +977,6 @@ function Summary({
   wallet,
   helper,
   icon,
-  onViewAvailable,
   emptyLabel = "None found",
 }: {
   label: string;
@@ -1019,7 +984,6 @@ function Summary({
   wallet: string;
   helper: string;
   icon: React.ReactNode;
-  onViewAvailable?: () => void;
   emptyLabel?: string;
 }) {
   return (
@@ -1039,7 +1003,6 @@ function Summary({
         {values.length > 2 && <small>+{values.length - 2} other assets</small>}
       </div>
       <p>{helper}</p>
-      {label === "AVAILABLE TO HARVEST" && <a className="harvest-shortcut" href="#fees" onClick={onViewAvailable} aria-label="View claimable fees"><ArrowUpRight size={20} /></a>}
     </div>
   );
 }
