@@ -285,3 +285,6 @@ td { border-color: #282b34; }
 }
 
 .empty-icon > span { color: #253016; }
+
+.page-footer > div { flex-wrap: wrap; }
+.wallet-modal > .secondary-button + .secondary-button { margin-left: 10px; }

@@ -152,6 +152,9 @@ export default function Home() {
   const claims = useRef<ClaimController | null>(null);
   const [walletOptions, setWalletOptions] = useState<WalletOption[]>([]);
   const [walletMenu, setWalletMenu] = useState(false);
+  const [progressMenu, setProgressMenu] = useState(false);
+  const [progressNotice, setProgressNotice] = useState("");
+  const progressFile = useRef<HTMLInputElement>(null);
   const [connecting, setConnecting] = useState(false);
   const [connectionNotice, setConnectionNotice] = useState("Connect your wallet to check available fees. Payout history loads only when opened.");
   const [selected, setSelected] = useState(new Set(SOURCE_INFO.map((s) => s.id))),
@@ -276,6 +279,27 @@ export default function Home() {
     const preferred = adapter.current?.options.find((option) => option.rabby);
     if (preferred) void adapter.current?.connect(preferred);
     else setWalletMenu(true);
+  }
+  function exportProgress() {
+    try {
+      const backup = cache.current!.exportProgress();
+      const url = URL.createObjectURL(new Blob([backup.data], {type:"application/json"}));
+      const link = document.createElement("a");
+      link.href = url; link.download = "hoodfees-progress.json"; link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setProgressNotice(`${backup.count} saved wallets exported. Keep the file to restore progress at the new address.`);
+    } catch { setProgressNotice("Progress could not be exported. Browser storage may be unavailable."); }
+  }
+  async function importProgress(file?: File) {
+    if (!file || claimBusy || running) return;
+    try {
+      if (file.size > 25_000_000) throw Error();
+      const result = cache.current!.importProgress(await file.text());
+      setProgressNotice(`${result.imported} saved wallets restored; ${result.kept} newer or matching records kept.`);
+      setConnectionNotice("Saved progress restored. Reconnect your wallet to resume its checkpoints.");
+      if (wallet) adapter.current?.disconnect();
+    } catch { setProgressNotice("This backup could not be restored. Existing progress has been kept. Use a valid HoodFees progress file and check browser storage."); }
+    finally { if (progressFile.current) progressFile.current.value = ""; }
   }
   function saveProgress() {
     if (!cacheAddress.current) return;
@@ -892,7 +916,7 @@ export default function Home() {
           })}
           <footer className="page-footer">
             <div><span className="footer-brand">HoodFees ↗</span><span>Find it. Claim it. Carry on.</span></div>
-            <div><a href="https://github.com/ethduke/hood-fee-harvest" target="_blank" rel="noreferrer">View source <ArrowUpRight size={14} /></a><button className="text-button" onClick={() => setInfo(true)}>Coverage & privacy <ArrowUpRight size={14} /></button></div>
+            <div><a href="https://github.com/ethduke/hoodfees" target="_blank" rel="noreferrer">View source <ArrowUpRight size={14} /></a><button className="text-button" onClick={() => { setProgressNotice(""); setProgressMenu(true); }}>Saved progress</button><button className="text-button" onClick={() => setInfo(true)}>Coverage & privacy <ArrowUpRight size={14} /></button></div>
             <small>Independent tool. No Robinhood or launchpad affiliation.</small>
           </footer>
         </main>
@@ -908,6 +932,19 @@ export default function Home() {
           <a className="text-button" href={explorer("address", claimState.quote.target)} target="_blank" rel="noreferrer">View claim contract <ArrowUpRight size={13} /></a>
           <p>The claim was simulated. Amounts can change before mining. You pay network gas in ETH; your wallet shows the final gas fee. No token approval is requested.</p>
           <button className="primary-button" onClick={() => void claims.current?.send()}>Confirm in wallet<ArrowUpRight size={15} /></button>
+        </WalletDialog>
+      )}
+      {progressMenu && (
+        <WalletDialog titleId="progress-title" closeLabel="Close saved progress" onClose={() => setProgressMenu(false)}>
+          <h2 id="progress-title">Your saved progress.</h2>
+          <p>Export checkpoints before changing the site address, or restore a backup here. Your source choices, discovered positions and payout history are included.</p>
+          <p>Backups contain wallet addresses and scan results. Export and restore happen in this browser; the file is never uploaded to the server.</p>
+          <button className="secondary-button" disabled={running || claimBusy} onClick={exportProgress}>Export progress</button>
+          <button className="secondary-button" disabled={running || claimBusy} onClick={() => progressFile.current?.click()}>Restore progress</button>
+          <input ref={progressFile} type="file" accept=".json,application/json" hidden aria-label="Progress backup file" onChange={(event) => void importProgress(event.target.files?.[0])} />
+          {(running || claimBusy) && <p>Pause the scan and finish any active claim before exporting or restoring.</p>}
+          {progressNotice && <p role="status" aria-live="polite">{progressNotice}</p>}
+          <p>After restoring, connect your wallet to refresh balances and resume the saved checkpoints. Newer progress is kept.</p>
         </WalletDialog>
       )}
       {walletMenu && (
