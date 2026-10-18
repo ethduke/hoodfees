@@ -1,9 +1,14 @@
 import type { Metadata } from "next";
 import "./globals.css";
+const title = "HoodFees — Claim Creator Fees on Robinhood Chain";
+const description =
+  "Find and claim creator, deployer and referral fees on Robinhood Chain. Check O1, Long/Longbow and pons balances and track verified payouts with your wallet.";
 export const metadata: Metadata = {
-  title: "Hood Fee Harvest — Find your launchpad fees",
-  description:
-    "Connect your wallet to discover unclaimed launchpad fees, review claims and track verified payouts on Robinhood Chain.",
+  title,
+  description,
+  applicationName: "HoodFees",
+  openGraph: { title, description, siteName: "HoodFees", type: "website" },
+  twitter: { card: "summary", title, description },
   icons: { icon: "/favicon.svg" },
   robots: { index: true, follow: true },
 };

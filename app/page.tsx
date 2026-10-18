@@ -512,8 +512,8 @@ export default function Home() {
     <div className="app-shell">
       <div className="main-shell">
         <header className="topbar">
-          <Link href="/" className="brand" aria-label="Hood Fee Harvest home">
-            <Brand /><span>hood<span className="brand-sub">FEE HARVEST</span></span>
+          <Link href="/" className="brand" aria-label="HoodFees home">
+            <Brand /><span>Hood<span className="brand-fees">Fees</span></span>
           </Link>
           <div className="topbar-right">
             <span className="header-network"><span className="green-dot" /> Robinhood Chain</span>
@@ -533,7 +533,7 @@ export default function Home() {
         <main id="harvest">
           <section className="page-heading" aria-labelledby="hero-title">
             <div>
-              <h1 id="hero-title">Your launchpad <span>fees.</span></h1>
+              <h1 id="hero-title">Find and claim your <span>launchpad fees.</span></h1>
               <p>Find available fees. Track confirmed payouts.</p>
             </div>
           </section>
@@ -891,7 +891,7 @@ export default function Home() {
             );
           })}
           <footer className="page-footer">
-            <div><span className="footer-brand">hood ↗</span><span>Find it. Claim it. Carry on.</span></div>
+            <div><span className="footer-brand">HoodFees ↗</span><span>Find it. Claim it. Carry on.</span></div>
             <div><a href="https://github.com/ethduke/hood-fee-harvest" target="_blank" rel="noreferrer">View source <ArrowUpRight size={14} /></a><button className="text-button" onClick={() => setInfo(true)}>Coverage & privacy <ArrowUpRight size={14} /></button></div>
             <small>Independent tool. No Robinhood or launchpad affiliation.</small>
           </footer>
