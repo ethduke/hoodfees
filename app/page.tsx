@@ -682,10 +682,12 @@ export default function Home() {
                       : !result.coverage.blocksChecked && !result.coverage.pending ? "0.00% · preparing historical ranges"
                       : `${percent.toFixed(2)}% · event coverage${result.coverage.pending ? " · verifying records" : ""}`;
                     return <li key={source.id}>
-                      <div><strong>{source.name}</strong><span>{label}</span></div>
+                      <div>
+                        <div className="source-name"><strong>{source.name}</strong>{running && retrying[source.id] && <span className="source-retry" role="status">({retrying[source.id]})</span>}</div>
+                        <span>{label}</span>
+                      </div>
                       {result && <progress aria-label={`${source.name} ${registry ? "registry" : indexed ? "wallet index" : "event range"} progress`} max={100}
                         value={state.refreshPending || indexed && activeTab !== "history" && !result.coverage.complete ? undefined : percent} />}
-                      {retrying[source.id] && <small role="status">{retrying[source.id]}</small>}
                     </li>;
                   })}
                 </ul>
