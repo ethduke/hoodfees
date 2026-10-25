@@ -88,7 +88,6 @@ main { min-width: 0; flex: 1; padding: 24px 32px 0; }
 .source-progress li > div > span { color: var(--muted); }
 .source-progress progress { display: block; width: 100%; height: 4px; margin: 6px 0; accent-color: var(--green); }
 .source-progress small { display: block; color: var(--muted); font-size: 10px; line-height: 1.7; }
-.source-progress small a { display: inline-flex; align-items: center; gap: 3px; text-decoration: underline; text-underline-offset: 2px; }
 .reset-scan { margin-top: 12px; }
 .pulse-dot { animation: pulse 1.5s infinite; }
 .scan-actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; flex-shrink: 0; }

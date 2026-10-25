@@ -686,7 +686,6 @@ export default function Home() {
                       {result && <progress aria-label={`${source.name} ${registry ? "registry" : indexed ? "wallet index" : "event range"} progress`} max={100}
                         value={state.refreshPending || indexed && activeTab !== "history" && !result.coverage.complete ? undefined : percent} />}
                       {retrying[source.id] && <small role="status">{retrying[source.id]}</small>}
-                      {result && <small>{state.pages} scan requests · {result.coverage.pending} records awaiting verification · <a href={explorer("block", String(result.snapshot.number))} target="_blank" rel="noreferrer">Block {result.snapshot.number.toLocaleString()}<ArrowUpRight size={10} /></a></small>}
                     </li>;
                   })}
                 </ul>
