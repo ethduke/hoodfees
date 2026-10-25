@@ -53,6 +53,9 @@
     "js-yaml": "5.5.0",
     "braces": "$braces",
     "brace-expansion@<2": "1.1.21",
-    "brace-expansion@>=3": "5.0.12"
+    "brace-expansion@>=3": "5.0.12",
+    "undici": "7.30.1",
+    "zod": "4.6.6",
+    "fast-uri": "3.1.9"
   }
 }
