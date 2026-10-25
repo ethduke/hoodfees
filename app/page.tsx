@@ -689,7 +689,6 @@ export default function Home() {
                     </li>;
                   })}
                 </ul>
-                <p>100% means the supported checks for this view are complete at its snapshot block. Index delays and the exclusions under What’s covered still apply. Scans use 20 confirmations. {snapshotsMatch ? "Selected fee sources share a snapshot." : "Source snapshots may differ."}</p>
                 <button className="text-button reset-scan" disabled={claimBusy} onClick={resetScan}><RotateCcw size={13} />Reset scan</button>
               </details>
             </section>
