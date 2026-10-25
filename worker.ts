@@ -5,6 +5,7 @@ declare const __RELEASE_SHA__: string;
 type Bindings = {
   ROBINHOOD_RPC_URL?: string;
   O1_API_KEY?: string;
+  BAGS_API_KEY?: string;
   SCAN_CURSOR_SECRET?: string;
   LEGACY_PROGRESS_URL?: string;
 };

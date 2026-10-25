@@ -5,6 +5,7 @@ import { scan } from "../lib/fees/engine.mjs";
 import { BAGS, BAGS_BEACON, BAGS_FACTORY_IMPL, BAGS_FEE_IMPL, BAGS_HOOK, BANKR_HOOK, LONG, LONG_HOOK, WETH } from "../lib/fees/catalog.mjs";
 import { bagsFeeAbi, longAbi } from "../lib/fees/abi.mjs";
 import { bagsBalance, verifyBagsDeployment } from "../lib/fees/bags.mjs";
+import { parseBagsIndex, readBagsIndex } from "../lib/fees/bags-index.mjs";
 import { parseBankrIndex, readBankrIndex } from "../lib/fees/bankr-index.mjs";
 import { claimPlan, validateQuote, claimKey } from "../lib/fees/claim-plan.mjs";
 import { prepareClaim, confirmClaim, receiptPayouts } from "../lib/fees/claims.mjs";
@@ -46,7 +47,7 @@ function fixture() {
       if (name === "feeShareForToken") return state.replacementFee ?? feeAt(indexAt(args[0], 4096));
       if (name === "claimable") return state.eligible.has(indexAt(address, 8192)) ? state.notified : 0n;
       if (name === "claimerBps") return state.eligible.has(indexAt(address, 8192)) ? state.bps : 0;
-      if (name === "PARTNER") return other;
+      if (name === "PARTNER") return state.partner ?? other;
       if (name === "aggregate3") return [{ success: true, returnData: "0x" }, { success: true,
         returnData: encodeFunctionResult({ abi: bagsFeeAbi, functionName: "claimable", result: state.afterSweep }) }];
       if (name === "getState") return [WETH, 0n, state.dopplerHook, "0x", 2, key, 0];
@@ -284,4 +285,155 @@ test("Bags browser preflight checks the live implementation before any wallet se
     hashCode: () => profiles[verified++].hash, fetcher: async () => new Response(JSON.stringify(f.quote)) });
   await controller.begin(f.row); assert.equal(controller.state.phase, "review");
   await controller.send(); assert.equal(controller.state.error, "contract_changed"); assert.equal(sends, 0);
+});
+
+const bagsKey = "fixture-bags-index-key";
+const bagsBody = (indices = [0], patch = {}) => ({ success: true, response: {
+  positions: indices.map((i) => ({ version: "v2", token: { address: tokenAt(i), feeShare: feeAt(i) },
+    feeShare: feeAt(i), claimableWei: "999999999999", actionableWei: "999999999999", isClaimer: false, isPartner: false })),
+  truncated: false, ...patch,
+} });
+
+test("Bags wallet index checks only the returned candidate, with onchain eligibility, balance and claim authority", async () => {
+  const f = fixture(); f.state.total = 4446;
+  let requests = 0;
+  const options = { ...f.options, bagsKey, indexFetcher: async function(url, settings) {
+    requests++;
+    assert.equal(this, globalThis);
+    assert.equal(url, `https://public-api-v2.bags.fm/api/v1/evm/rh/claimable-positions?owner=${wallet}`);
+    assert.equal(settings.headers["x-api-key"], bagsKey); assert.equal(settings.redirect, "manual");
+    assert.equal(settings.credentials, "omit"); assert.equal(settings.cache, "no-store");
+    return Response.json(bagsBody());
+  } };
+  const result = await scan({ address: wallet, source: "bags", scope: "balances" }, options);
+  assert.equal(requests, 1); assert.equal(result.discovery, "wallet-index"); assert.equal(result.coverage.complete, true);
+  assert.equal(result.balances[0].raw, "17"); assert.equal(result.coverage.positionsChecked, 1);
+  assert.equal(f.state.calls.filter((call) => ["getTokens", "allTokensLength"].includes(call.name)).length, 0);
+  assert.ok(f.state.calls.some((call) => call.name === "claimerBps"));
+  const quote = await prepareClaim({ address: wallet, claimHandle: result.balances[0].claimHandle }, f.options);
+  assert.equal(quote.target, fee); assert.equal(quote.value, "0x0");
+  assert.deepEqual(decodeFunctionData({ abi: bagsFeeAbi, data: quote.data }).args, [false]);
+});
+
+test("Bags index flags and amounts cannot create a fee for an unrelated wallet", async () => {
+  const f = fixture(); f.state.eligible.clear(); f.state.notified = 0n;
+  const result = await scan({ address: wallet, source: "bags", scope: "balances" }, { ...f.options, bagsKey,
+    indexFetcher: async () => Response.json(bagsBody()) });
+  assert.equal(result.coverage.complete, true); assert.deepEqual(result.balances, []);
+  assert.equal(f.state.calls.some((call) => call.name === "aggregate3"), false);
+});
+
+test("Bags index retains the onchain credited balance of a removed claimer", async () => {
+  const f = fixture(); f.state.bps = 0; f.state.afterSweep = f.state.notified;
+  const result = await scan({ address: wallet, source: "bags", scope: "balances" }, { ...f.options, bagsKey,
+    indexFetcher: async () => Response.json(bagsBody()) });
+  assert.equal(result.balances[0].raw, "10"); assert.ok(result.balances[0].claimHandle);
+});
+
+test("Bags index candidates drain over saved pages without rereading the index or registry", async () => {
+  const f = fixture(); f.state.total = 4446; f.state.eligible = new Set([0,1,2,3,4]);
+  let requests = 0;
+  const options = { ...f.options, bagsKey, indexFetcher: async () => { requests++; return Response.json(bagsBody([0,1,2,3,4])); } };
+  let result = await scan({ address: wallet, source: "bags", scope: "balances" }, options);
+  assert.equal(result.coverage.complete, false); assert.equal(result.coverage.positionsChecked, 2);
+  const rows = [...result.balances];
+  while (result.cursor) { result = await scan({ address: wallet, source: "bags", scope: "balances", cursor: result.cursor }, options); rows.push(...result.balances); }
+  assert.equal(rows.length, 5); assert.equal(requests, 1); assert.equal(result.coverage.positionsChecked, 5);
+  assert.equal(f.state.calls.some((call) => call.name === "getTokens"), false);
+});
+
+test("Bags legacy registry checkpoints adopt the index and preserve unfinished registry ranges for fallback", async () => {
+  const f = fixture(); f.state.total = 512;
+  const first = await scan({ address: wallet, source: "bags", scope: "balances" }, f.options);
+  assert.equal(first.coverage.positionsChecked, 128);
+  const boundary = f.state.calls.length;
+  const indexed = await scan({ address: wallet, source: "bags", scope: "balances", cursor: first.cursor }, { ...f.options, bagsKey,
+    indexFetcher: async () => Response.json(bagsBody()) });
+  assert.equal(indexed.coverage.complete, true); assert.equal(indexed.balances[0].token, token);
+  assert.equal(f.state.calls.slice(boundary).some((call) => call.name === "getTokens"), false);
+  f.state.head++;
+  let fallback = await scan({ address: wallet, source: "bags", scope: "balances", checkpoint: indexed.checkpoint }, f.options);
+  while (fallback.cursor) fallback = await scan({ address: wallet, source: "bags", scope: "balances", cursor: fallback.cursor }, f.options);
+  const registryReads = f.state.calls.slice(boundary).filter((call) => call.name === "getTokens");
+  assert.deepEqual(registryReads.map((call) => call.args), [[256n,128n],[128n,128n],[0n,128n]]);
+});
+
+test("Bags refresh verifies known positions even when the latest index omits them", async () => {
+  const f = fixture(); let body = bagsBody();
+  const options = { ...f.options, bagsKey, indexFetcher: async () => Response.json(body) };
+  const first = await scan({ address: wallet, source: "bags", scope: "balances" }, options);
+  body = bagsBody([]); f.state.head++; f.state.afterSweep = 22n;
+  const result = await scan({ address: wallet, source: "bags", scope: "balances", checkpoint: first.checkpoint }, options);
+  assert.equal(result.resetBalances, true); assert.equal(result.balances[0].raw, "22");
+  assert.equal(result.coverage.complete, true); assert.equal(result.coverage.positionsChecked, 1);
+  assert.equal(f.state.calls.some((call) => call.name === "getTokens"), false);
+});
+
+test("a truncated Bags index cannot replace exhaustive registry coverage with a false empty result", async () => {
+  const f = fixture(); f.state.total = 257;
+  let requests = 0;
+  const options = { ...f.options, bagsKey, indexFetcher: async () => { requests++; return Response.json(bagsBody([], {truncated:true})); } };
+  let result = await scan({ address: wallet, source: "bags", scope: "balances" }, options);
+  assert.equal(result.discovery, "onchain-registry"); assert.equal(result.coverage.complete, false);
+  assert.ok(result.warnings.includes("bags_index_truncated"));
+  const rows = [...result.balances];
+  while (result.cursor) { result = await scan({ address: wallet, source: "bags", scope: "balances", cursor: result.cursor }, options); rows.push(...result.balances); }
+  assert.equal(requests, 1); assert.equal(result.coverage.positionsChecked, 257);
+  assert.equal(rows[0].token, token); assert.equal(result.coverage.complete, true);
+});
+
+test("Bags index cannot substitute fee-share bindings or survive a pinned implementation change", async () => {
+  for (const field of ["replacementFee", "implementation"]) {
+    const f = fixture(); f.state[field] = other;
+    await assert.rejects(scan({ address: wallet, source: "bags", scope: "balances" }, { ...f.options, bagsKey,
+      indexFetcher: async () => Response.json(bagsBody()) }), e => e.code === "contract_changed");
+  }
+});
+
+test("Bags history remains on demand and never calls the wallet discovery index", async () => {
+  const f = fixture(); f.state.pendingLogs = [claimedLog()];
+  const result = await scan({ address: wallet, source: "bags", scope: "history" }, { ...f.options, bagsKey,
+    indexFetcher: async () => assert.fail("history must not use the wallet index") });
+  assert.equal(result.history.length, 1); assert.equal(f.state.calls.some((call) => call.name === "getTokens"), false);
+});
+
+test("Bags index parser rejects malformed, foreign and conflicting identities, and explicitly excludes v1", () => {
+  const snapshot = 10_000_000;
+  for (const body of [
+    { success:false, response:{} }, bagsBody([], { owner:other }), bagsBody([], { chainId:1 }),
+    bagsBody([], { truncated:"false" }), bagsBody([], { truncated:undefined }),
+    bagsBody([], { positions:[{version:"v2",token:{address:token},feeShare:"bad"}] }),
+    bagsBody([], { positions:[{version:"v2",token:{address:token,feeShare:other},feeShare:fee}] }),
+    bagsBody([], { positions:[{version:"v2",token:{address:token,chainId:1},feeShare:fee}] }),
+    bagsBody([], { positions:[{version:"unknown",token:{address:token},feeShare:fee}] }),
+    bagsBody([], { positions:[...bagsBody().response.positions,{version:"v2",token:{address:token},feeShare:other}] }),
+  ]) assert.throws(() => parseBagsIndex(body,wallet,snapshot), e => e.code === "invalid_response");
+  const legacy = parseBagsIndex(bagsBody([], {positions:[{version:"v1"}]}),wallet,snapshot);
+  assert.equal(legacy.legacy,true); assert.deepEqual(legacy.positions,[]);
+  const future = bagsBody(); future.response.positions[0].token.createdAtBlock = snapshot + 1;
+  assert.deepEqual(parseBagsIndex(future,wallet,snapshot).positions,[]);
+});
+
+test("Bags index outages, rejected credentials and malformed bodies never leak upstream text or become empty success", async () => {
+  const sentinel = "synthetic-upstream-secret-sentinel";
+  for (const fetcher of [
+    async () => { throw Error(sentinel); },
+    async () => new Response(sentinel,{status:401}),
+    async () => new Response(sentinel,{status:503}),
+    async () => new Response(sentinel),
+  ]) await assert.rejects(readBagsIndex(wallet,10_000_000,bagsKey,fetcher), e =>
+    ["index_unavailable","invalid_response"].includes(e.code) && !e.message.includes(sentinel));
+  await assert.rejects(readBagsIndex(wallet,10_000_000,bagsKey,async () => new Response(sentinel,{status:429})), e => e.code === "rate_limited");
+  const f = fixture();
+  await assert.rejects(scan({address:wallet,source:"bags",scope:"balances"},{...f.options,bagsKey,
+    indexFetcher:async () => new Response(sentinel,{status:503})}), e => e.code === "index_unavailable");
+  assert.equal(f.state.calls.some(call => call.name === "getTokens"),false);
+});
+
+test("Bags index discovers an onchain partner before any fees have been notified", async () => {
+  const f=fixture();f.state.eligible.clear();f.state.notified=0n;f.state.partner=wallet;
+  const result=await scan({address:wallet,source:"bags",scope:"balances"},{...f.options,bagsKey,
+    indexFetcher:async()=>Response.json(bagsBody())});
+  assert.equal(result.balances[0].raw,"17");assert.equal(result.balances[0].notifiedRaw,"0");
+  assert.ok(result.balances[0].claimHandle);
 });

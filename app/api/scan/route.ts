@@ -4,6 +4,7 @@ export async function POST(request: Request) {
     url: process.env.ROBINHOOD_RPC_URL || undefined,
     secret: process.env.SCAN_CURSOR_SECRET || undefined,
     o1Key: process.env.O1_API_KEY || undefined,
+    bagsKey: process.env.BAGS_API_KEY || undefined,
     legacyProgressUrl: process.env.LEGACY_PROGRESS_URL || undefined,
   });
 }

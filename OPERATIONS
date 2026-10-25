@@ -37,8 +37,22 @@ shared Long/Longbow locked-pool manager; pons v2 fee escrow plus curve/hook disc
 pons v1 lockers. Migrated Doppler pools and separate Long hook payouts are outside
 coverage. Each source reports its exclusions and scan progress in the interface.
 
-Bags needs no API key. Its registry is checked in batches of 128 tokens, followed
-by bounded recipient checks. Available WETH includes a read-only atomic preview
+Bags uses its official owner-specific claimable-positions index when the optional
+BAGS_API_KEY runtime secret is configured. Only v2 token and fee-share identities
+are accepted; all API amounts, eligibility flags and transaction data are ignored.
+Each candidate is bound to the pinned factory, proxy, curve and hook, then its
+recipient status, claimable ledger and sweep preview are read onchain. Previously
+verified positions are refreshed even when the index stops listing them; removed
+recipients can still claim already-credited balances. Index completion means all
+returned positions were verified, subject to upstream indexing delays.
+
+A missing key uses the onchain registry without contacting the index. An explicitly
+truncated index list prioritizes its candidates, then resumes registry discovery;
+it never becomes a completed empty result. Provider/index failures remain errors
+and preserve the signed checkpoint. Legacy registry checkpoints can adopt index
+discovery without a reset, and retain older registry coverage for later fallback.
+The no-key registry is checked in batches of 128 tokens, followed by bounded
+recipient checks. Available WETH includes a read-only atomic preview
 of the hook sweep followed by the recipient's ledger balance; a failed sweep
 leaves only already-notified fees available. Claims call claim(false) on the
 factory-authenticated fee-share and pay WETH. The factory's ERC1967 implementation,
@@ -57,7 +71,8 @@ deduplicated before totals. Registry and history checkpoints retain unfinished
 work and only append newly created entries/ranges on refresh.
 
 Bankr discovery sends the requested address to api.bankr.bot through the server.
-Bags registry discovery only contacts the chain provider. Upstream index amounts
+Configured Bags index discovery sends the address to public-api-v2.bags.fm through
+the server. Its registry fallback contacts only the chain provider. Upstream index amounts
 and transaction payloads are never used as claim authority.
 
 Wallet connection uses account access only, with Rabby preferred. Scanning never
@@ -89,7 +104,9 @@ Standalone Cloudflare Workers hosting
 The repository deploys one Worker named hoodfees plus static frontend assets.
 The build reads no dotenv files; runtime keys are Worker secret bindings.
 Configure ROBINHOOD_RPC_URL, O1_API_KEY and SCAN_CURSOR_SECRET in Cloudflare
-Settings > Variables and Secrets. Never add these values to GitHub build variables.
+Settings > Variables and Secrets. Add BAGS_API_KEY there as an encrypted runtime
+secret to enable Bags wallet-index discovery; obtain it from dev.bags.fm. Never add
+these values to GitHub build variables.
 Missing bindings disable scanning and claim preparation; no public-RPC fallback
 or temporary signing key is used by the production Worker.
 

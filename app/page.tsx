@@ -117,6 +117,8 @@ const errors: Record<string, string> = {
   index_unavailable: "The launchpad’s wallet index is unavailable. Saved progress is kept; try again shortly.",
 };
 const warningText: Record<string, string> = {
+  bags_index_truncated: "Bags’ wallet index returned an incomplete list. Registry discovery is used to finish supported coverage.",
+  bags_index_legacy: "Legacy Bags v1 positions returned by the index are outside this adapter’s reviewed deployments and are excluded.",
   bankr_unreviewed_route: "Some Bankr positions use a hook or manager outside the reviewed deployments. Those fees are excluded.",
   bags_unreviewed_claim: "Some matching claim events are outside the reviewed Bags v2 deployments and were excluded.",
   o1_unreviewed_escrow: "The O1 index returned an escrow outside the reviewed contract set. Its fees are excluded from claims here.",
@@ -1003,7 +1005,7 @@ export default function Home() {
                 are never converted into a pretend combined currency.
               </p>
               <p>
-                <strong>Progress stays in this browser.</strong> Scan results, wallet addresses, source choices and signed progress cursors are stored locally per wallet so you can resume after refresh or reconnect. Reset scan removes the connected wallet’s saved progress. No wallet address is put in this site’s URLs, application logs, analytics or a database. O1 and Bankr discovery send your address to their wallet indexes through the server; Bags registry discovery and onchain queries go to the chain provider. Hosting logs depend on the operator’s settings. Signed scan checkpoints survive cursor expiry. Returning refreshes known balances and discovery, then automatically finishes older unchecked ranges. A changed chain snapshot or signing key can require a reset.
+                <strong>Progress stays in this browser.</strong> Scan results, wallet addresses, source choices and signed progress cursors are stored locally per wallet so you can resume after refresh or reconnect. Reset scan removes the connected wallet’s saved progress. No wallet address is put in this site’s URLs, application logs, analytics or a database. O1, Bankr and configured Bags index discovery send your address to their wallet indexes through the server; registry discovery and onchain queries go to the chain provider. Hosting logs depend on the operator’s settings. Signed scan checkpoints survive cursor expiry. Returning refreshes known balances and discovery, then automatically finishes older unchecked ranges. A changed chain snapshot or signing key can require a reset.
               </p>
               <p>
                 <strong>More adapters come later.</strong> Flap, pools.trade, PAIR and other
