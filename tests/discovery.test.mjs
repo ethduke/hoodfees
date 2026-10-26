@@ -82,11 +82,12 @@ test("available discovery excludes payout streams and still finds non-native owe
       if (filter.address !== O1[0].address) return [];
       return [{...claimLog(filter,88000000), topics:encodeEventTopics({abi:o1Legacy,eventName:"Credited",args:{recipient:wallet,currency:other}})}];
     });
+    if (source === "long") rpc.snapshot = async () => ({ number: LONG.start + 250000, hash });
     const {results, history} = await allPages(source,rpc,undefined,"balances");
     assert.equal(history.length,0);
     assert.equal(results.at(-1).coverage.complete,true);
     if (source === "o1") assert.ok(results.flatMap((r)=>r.balances).some((r)=>r.currency===other));
-    if (source === "long") assert.equal(rpc.queries.length,1);
+    if (source === "long") assert.equal(rpc.queries.length,2);
   }
 });
 test("payout history loads claim events without balance reads or claim simulations", async () => {
@@ -138,18 +139,19 @@ test("in-flight fixed-window cursors expand only their remaining unprocessed ran
   assert.equal(rpc.queries[0].toBlock,toHex(40000000));
   assert.equal(rpc.queries[0].fromBlock,toHex(O1[0].start));
 });
-test("Long discards unrelated global discovery before pending limits, and filters payouts by beneficiary", async () => {
+test("Long pages unrelated global discovery before decoding and filters payouts by beneficiary", async () => {
   const lock = longAbi.find((e)=>e.name==="Lock");
   const rpc = rpcFor((filter) => Array.isArray(filter.topics[0])
-    ? Array.from({length:200},(_,i)=>({address:LONG.address, removed:false, blockHash:hash,
+    ? Array.from({length:32},(_,i)=>({address:LONG.address, removed:false, blockHash:hash,
       transactionHash:hash,blockNumber:filter.toBlock,logIndex:toHex(i),
       topics:encodeEventTopics({abi:longAbi,eventName:"Lock",args:{pool:other}}),
       data:encodeAbiParameters(lock.inputs.filter((p)=>!p.indexed),[[{beneficiary:other,shares:10n**18n}]])}))
     : []);
+  rpc.snapshot = async () => ({ number: LONG.start, hash });
   const {results} = await allPages("long",rpc);
-  assert.equal(rpc.queries.length,2);
+  assert.equal(rpc.queries.length,3);
   assert.equal(results[0].coverage.pending,0);
-  assert.equal(rpc.queries[1].topics[2],`0x${"0".repeat(24)}${wallet.slice(2)}`);
+  assert.equal(rpc.queries.find((query) => !Array.isArray(query.topics[0])).topics[2],`0x${"0".repeat(24)}${wallet.slice(2)}`);
 });
 test("empty pons wallet never scans all v1 collections or misuses the collection caller as recipient", async () => {
   const rpc = rpcFor(()=>[]);
