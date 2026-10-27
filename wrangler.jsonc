@@ -6,6 +6,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "preview_urls": false,
+  "d1_databases": [{ "binding": "DISCOVERY_DB", "database_name": "hoodfees-discovery", "database_id": "b712743f-04f8-4f91-af35-d72859c37994" }],
   "assets": { "directory": "dist/client", "binding": "ASSETS" },
   "routes": [
     { "pattern": "hoodfees.xyz", "custom_domain": true },

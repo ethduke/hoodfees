@@ -13,7 +13,7 @@ test("Workers runtime fails closed when private bindings or a stable signing key
   }
 });
 test("Workers health exposes only release metadata; API method and same-origin protections remain enforced",async()=>{
-  const env={ROBINHOOD_RPC_URL:"https://provider.example.invalid/withheld",O1_API_KEY:"withheld",SCAN_CURSOR_SECRET:"fixture-"+"x".repeat(40)};
+  const env={ROBINHOOD_RPC_URL:"https://provider.example.invalid/withheld",O1_API_KEY:"withheld",SCAN_CURSOR_SECRET:"fixture-"+"x".repeat(40),DISCOVERY_DB:{prepare(){},batch(){}}};
   const health=await workerApi(new Request(origin+"/api/health"),env,revision);
   assert.deepEqual(await health.json(),{status:"ok",revision,chainId:4663});
   const get=await workerApi(new Request(origin+"/api/claim/prepare"),env,revision);

@@ -8,6 +8,7 @@ type Bindings = {
   BAGS_API_KEY?: string;
   SCAN_CURSOR_SECRET?: string;
   LEGACY_PROGRESS_URL?: string;
+  DISCOVERY_DB?: D1Database;
 };
 
 export default {

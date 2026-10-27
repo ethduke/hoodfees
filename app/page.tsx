@@ -78,7 +78,7 @@ type Result = {
   checkpoint?: string;
   resetBalances?: boolean;
   updatesComplete?: boolean;
-  discovery?: "wallet-index" | "onchain-registry";
+  discovery?: "wallet-index" | "onchain-registry" | "shared-index";
   snapshotCursor: string;
   source: string;
   snapshot: { number: number; hash: string; timestamp: number };
@@ -271,6 +271,8 @@ export default function Home() {
     try {
       await runScanQueue({
         sources: ids,
+        concurrency: ids.length,
+        interval: 0,
         signal,
         isComplete: sourceComplete,
         step: async (id: string) => {
@@ -316,7 +318,8 @@ export default function Home() {
             const retryHeader = response.headers.get("retry-after");
             const seconds = retryHeader ? Number(retryHeader) : 0;
             const retryAfter = Number.isFinite(seconds) ? seconds * 1000 : Math.max(0, Date.parse(retryHeader || "") - Date.now());
-            throw new ScanError(response.status === 429 ? "rate_limited" : data.error || "provider_unavailable", retryAfter);
+            throw new ScanError(response.status === 429 ? "rate_limited" : data.error || "provider_unavailable", retryAfter,
+              response.headers.get("x-hood-rate-scope") === "rpc" ? "rpc" : "source");
           }
           const result = data as Result;
           updatesWanted.delete(id);
@@ -1005,7 +1008,7 @@ export default function Home() {
                 are never converted into a pretend combined currency.
               </p>
               <p>
-                <strong>Progress stays in this browser.</strong> Scan results, wallet addresses, source choices and signed progress cursors are stored locally per wallet so you can resume after refresh or reconnect. Reset scan removes the connected wallet’s saved progress. No wallet address is put in this site’s URLs, application logs, analytics or a database. O1, Bankr and configured Bags index discovery send your address to their wallet indexes through the server; registry discovery and onchain queries go to the chain provider. Hosting logs depend on the operator’s settings. Signed scan checkpoints survive cursor expiry. Returning refreshes known balances and discovery, then automatically finishes older unchecked ranges. A changed chain snapshot or signing key can require a reset.
+                <strong>Progress stays in this browser.</strong> Scan results, source choices and signed progress cursors are stored locally per wallet so you can resume after refresh or reconnect. Reset scan removes the connected wallet’s saved progress. Search requests, credentials and signed wallet progress are never written to the shared database; it indexes public launch and beneficiary events so wallets can reuse discovery work. No wallet address is put in this site’s URLs, application logs or analytics. O1, Bankr and configured Bags discovery send your address to their wallet indexes through the server; public event indexing and onchain verification use the chain provider. Bankr discovery hints may be cached in memory for five minutes; balances are verified onchain. Hosting logs depend on the operator’s settings. Signed scan checkpoints survive cursor expiry. Returning refreshes known balances and discovery, then automatically finishes older unchecked ranges. A changed chain snapshot or signing key can require a reset.
               </p>
               <p>
                 <strong>More adapters come later.</strong> Flap, pools.trade, PAIR and other

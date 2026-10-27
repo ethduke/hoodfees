@@ -10,7 +10,7 @@ Optional server settings are described in .env.example. Put real values in an
 ignored .env.local for local development or in your hosting provider's secret
 manager. Never use a NEXT_PUBLIC variable for provider URLs or keys.
 
-Wallet queries use same-origin POST requests. Wallet addresses and signed scan progress are cached only in browser storage.
+Wallet queries use same-origin POST requests. Signed wallet scan progress stays in browser storage. The shared database stores public onchain event memberships, never incoming search requests, credentials or claim handles.
 The application does not add addresses to URLs or log request bodies, provider
 responses, error stacks, or credentials. Hosting providers may maintain
 infrastructure access logs; configure those independently and disable body tracing.
@@ -20,10 +20,12 @@ server instances for cursor continuity. Results are taken at a fixed confirmed
 block and discarded if its hash changes. An incomplete scan never means zero fees.
 
 The browser scans until every selected source reports complete coverage. It
-rotates through bounded pages with one request in flight and a one-second delay
-after each page. Rate limits pause the entire queue; temporary provider/index
-outages retry with exponential backoff capped at 30 seconds (or the provider's
-Retry-After, up to five minutes). Pause aborts the active request and cooldown.
+runs independent sources in parallel, with one page in flight per source and no
+fixed delay or total scan-request/time cap. Shared RPC rate limits cool down new
+dispatches; API rate limits cool down only their source. Temporary outages use
+exponential backoff up to 30 seconds; any longer provider Retry-After or quota
+reset is honored in full. Pause aborts active pages and cooldowns. Individual
+pages still bound response sizes and CPU work to fit the Workers runtime.
 Every completed page and queued refresh is saved locally, so Resume scan and
 reconnect retain progress. Refresh checks new activity and then drains unfinished
 older discovery. Permanent verification/capacity errors leave that source visibly
@@ -31,8 +33,8 @@ incomplete while other sources finish. 100% describes supported checks at the
 snapshot, subject to the documented exclusions and upstream index delays.
 
 Coverage: O1 current, Tax and historical fee escrows; Bags v2 creator/partner
-fee-shares; Bankr-indexed original creator positions in the shared Doppler manager
-and the reviewed quote-only hook fee ledger; the
+fee-shares; Bankr creator positions plus shared event-index beneficiary discovery
+in the Doppler manager and reviewed quote-only hook fee ledger; the
 shared Long/Longbow locked-pool manager; pons v2 fee escrow plus curve/hook discovery;
 pons v1 lockers. Migrated Doppler pools and separate Long hook payouts are outside
 coverage. Each source reports its exclusions and scan progress in the interface.
@@ -64,8 +66,9 @@ fee checkpoints and simulations determine amounts and claim targets onchain.
 Both token assets are collected together, including for stock-paired pools.
 The core manager's collection path does not call the separate trading hook's
 swap callback. The reviewed quote-only ledger additionally authenticates its
-initializer and pool key. Transferred-in beneficiaries missing from Bankr's
-index, other hook versions, migrated pools and vesting are outside coverage.
+initializer and pool key. The shared onchain index supplements Bankr's creator API with transferred-in
+beneficiaries, including the hook's distinct FeeBeneficiariesSet event. Other
+hook versions, migrated pools and vesting are outside coverage.
 Shared Bankr/Long balances and payout events have identical identities and are
 deduplicated before totals. Registry and history checkpoints retain unfinished
 work and only append newly created entries/ranges on refresh.
@@ -95,8 +98,8 @@ A reverted or unverified payout is never recorded as a successful fee claim.
 Account changes invalidate unsubmitted reviews. A submitted claim is still tracked
 for its original owner; it only refreshes that owner's current view. Disconnecting
 clears scan results. Browser-local scan progress survives disconnects; Reset scan removes the chosen
-wallet's saved progress. Wallet queries and claim reviews are not stored on the
-server or written to logs.
+wallet's saved progress. Wallet queries and claim reviews are not persisted on the server or written
+to logs. Public upstream discovery hints may be reused in process memory.
 Run git config core.hooksPath .githooks to enable local pre-commit guards.
 
 Standalone Cloudflare Workers hosting
@@ -107,7 +110,9 @@ Configure ROBINHOOD_RPC_URL, O1_API_KEY and SCAN_CURSOR_SECRET in Cloudflare
 Settings > Variables and Secrets. Add BAGS_API_KEY there as an encrypted runtime
 secret to enable Bags wallet-index discovery; obtain it from dev.bags.fm. Never add
 these values to GitHub build variables.
-Missing bindings disable scanning and claim preparation; no public-RPC fallback
+Bind the existing hoodfees-discovery D1 database as DISCOVERY_DB using the
+tracked Worker configuration; tables initialize idempotently on first use.
+Missing required bindings disable scanning and claim preparation; no public-RPC fallback
 or temporary signing key is used by the production Worker.
 
 GitHub CI runs locked installation, repository privacy checks, synthetic wallet
@@ -135,8 +140,9 @@ The existing www CNAME must be replaced during cutover, not before testing.
 
 Progress migration is local export/restore using Saved progress in the footer.
 Changing a hostname does not transfer browser localStorage or wallet permissions.
-Keep the old site available until backups have been restored and the wallet has
-reconnected. Never send backup files to the API or commit them.
+The old host is owner-only. Never upload or restore progress backups
+automatically; users can reconnect and rescan. Never send backups to the API
+or commit them.
 
 The previous host retains its signing key and exposes /api/progress/migrate.
 The bridge verifies the exact read-only checkpoint signature without returning
@@ -145,3 +151,48 @@ The new Worker contacts that fixed HTTPS host without redirects, verifies the
 response, signs the same read-only state with its own key, and checks the canonical
 block before resuming ranges. Claim permissions cannot migrate. A failed handoff
 keeps the checkpoint and reports a fixed error; it never silently resets the scan.
+
+Shared discovery and provider limits
+
+Long/Longbow and pons factory discovery use a persistent D1 index of public
+launch, recipient and beneficiary events. Bankr uses both the Long manager and
+its separate pinned quote-only hook profile. A cold index catches up once through
+safe pages; other wallets reuse committed coverage. Refresh indexes only new
+confirmed blocks. Leases and atomic membership/checkpoint writes avoid duplicate
+committed indexing. Canonical hashes guard coverage; confirmed reorgs invalidate
+the affected namespace and leave scans incomplete until rebuilt. Balances,
+shares, recipients, implementation pins and wallet-from simulations remain
+onchain checks. Discovery hints never authorize transactions.
+
+Saved wallet checkpoints keep their signing format and browser key prefix.
+Existing wallet-specific history and known positions survive adoption of shared
+discovery. Partial shared coverage never reports a complete wallet scan: hint
+pagination and verification must finish too. Local Next development without D1
+uses legacy discovery; production requires the binding. Bankr discovery identities
+and concurrent lookups share a five-minute memory cache matching the upstream
+cache; current balances are always reread onchain. Metadata and code verification
+are reused only at their exact snapshot. Sender-independent reads use Multicall;
+sender-dependent collection simulations remain separate wallet-from eth_call.
+
+Alchemy Robinhood log ranges: Free permits 10 blocks/request; PAYG and Enterprise
+permit unrestricted ranges subject to response limits. Account tier and CU/s
+quota are not guessed: actual range errors shrink requests and HTTP/JSON 429
+responses preserve provider cooldowns. O1 permits 50 index records per page.
+Bags documents 5,000 requests/hour per user and IP across keys; Bankr public
+Doppler endpoints document 20 requests/minute/IP and five-minute caches.
+Undisclosed account/endpoint limits follow actual responses, not invented quotas.
+Source: https://www.alchemy.com/docs/chains/robinhood-chain/robinhood-chain-api-endpoints/eth-get-logs
+Source: https://www.alchemy.com/docs/reference/throughput
+Source: https://docs.o1.exchange/launchpad-api-openapi.yaml
+Source: https://docs.bags.fm/principles/rate-limits
+Source: https://docs.bankr.bot/token-launching/reading-fees/
+
+D1 Free includes five million rows read/day, 100,000 rows written/day,
+500 MB/database and 5 GB total storage. Queries use owner/identity indexes;
+warm complete scans do not rewrite watermarks. Documented daily row quotas wait
+until the actual midnight-UTC reset. Storage/invocation failures remain errors.
+No paid plan is enabled. Workers CPU and D1 parameter/value limits determine
+page and payload sizes, never total historical coverage.
+Source: https://developers.cloudflare.com/d1/platform/pricing/
+Source: https://developers.cloudflare.com/d1/platform/limits/
+Source: https://developers.cloudflare.com/workers/platform/limits/

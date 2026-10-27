@@ -34,7 +34,7 @@ test("O1 index supplies identities only; pinned contracts and onchain owed amoun
   const {rpc,options}=fixture(async function(url,settings){
     assert.equal(this,globalThis);assert.equal(new URL(url).origin,"https://api.launch.o1.exchange");
     assert.ok(new URL(url).pathname.endsWith(`/wallets/${wallet}/fee-claims`));
-    assert.equal(new URL(url).searchParams.get("limit"),"8");assert.equal(new URL(url).searchParams.get("chain_id"),"4663");
+    assert.equal(new URL(url).searchParams.get("limit"),"50");assert.equal(new URL(url).searchParams.get("chain_id"),"4663");
     assert.equal(settings.headers["x-api-key"],"fixture-key");assert.equal(settings.redirect,"manual");
     return json(body([item(),item()]));
   });
@@ -83,7 +83,7 @@ test("unknown escrows are excluded and foreign wallets, chains and malformed pag
   const result=await scan({address:wallet,source:"o1",scope:"balances"},options);
   assert.ok(result.warnings.includes("o1_unreviewed_escrow"));
   assert.ok(result.balances.every(row=>row.currency===NATIVE));
-  for(const malformed of [body([{...item(),recipient:other}]),body([{...item(),chain_id:8453}]),body([{...item(),claimable_raw:"bad"}]),body(Array(9).fill(item())),{data:[],pagination:{has_more:true,next_cursor:null}}])
+  for(const malformed of [body([{...item(),recipient:other}]),body([{...item(),chain_id:8453}]),body([{...item(),claimable_raw:"bad"}]),body(Array(51).fill(item())),{data:[],pagination:{has_more:true,next_cursor:null}}])
     assert.throws(()=>parseO1Index(malformed,wallet),e=>e.code==="invalid_response");
 });
 test("expired upstream pagination restarts only the small wallet list and repeated cursors are rejected",async()=>{
@@ -104,4 +104,20 @@ test("index failures never leak upstream text or credentials; history still uses
   assert.equal(history.discovery,undefined);assert.ok(rpc.logs>0);
   const response=await scanResponse(new Request("https://app.example.invalid/api/scan",{method:"POST",headers:{"content-type":"application/json","x-hood-intent":"scan"},body:JSON.stringify({address:wallet,source:"o1",scope:"balances"})}),{...options,indexFetcher:async()=>{throw Error("withheld credential and URL");}});
   assert.deepEqual(await response.json(),{error:"index_unavailable"});
+});
+test("O1 uses the documented 50-position page without trusting indexed amounts",async()=>{
+  const entries=Array.from({length:50},(_,i)=>item(`0x${BigInt(i+100).toString(16).padStart(40,"0")}`));
+  const parsed=parseO1Index(body(entries),wallet);
+  assert.equal(parsed.positions.length,50);
+  assert.ok(parsed.positions.every(position=>!Object.hasOwn(position,"raw")));
+  const {rpc,options}=fixture(async()=>json(body(entries)));
+  const result=await scan({address:wallet,source:"o1",scope:"balances"},options);
+  assert.equal(result.coverage.complete,true);
+  assert.equal(result.balances.filter(row=>row.currency!==NATIVE).length,50);
+  assert.equal(rpc.logs,0);
+});
+test("O1 rate limits preserve the provider's Retry-After while withholding its body",async()=>{
+  await assert.rejects(readO1Index(wallet,null,"fixture-key",async()=>new Response("withheld private body",{
+    status:429,headers:{"retry-after":"61"},
+  })),error=>error.code==="rate_limited"&&error.retryAfter===61000&&error.message==="rate_limited");
 });

@@ -177,7 +177,12 @@ test("pons batches initial custom-recipient discovery before applying the pendin
       data:encodeAbiParameters(launched.inputs.filter((p)=>!p.indexed),[NATIVE,1n,1n]),
     })));
   let batches=0;
-  rpc.calls=async(calls)=>{assert.ok(calls.length<=512);batches++;return calls.map(()=>({exists:true,creatorFeeRecipient:other}));};
+  rpc.calls=async(calls)=>{
+    assert.ok(calls.length<=512);
+    if(calls.some((call)=>call.functionName==="getLaunchedToken"))batches++;
+    return Promise.all(calls.map((call)=>call.functionName==="getLaunchedToken"
+      ? {exists:true,creatorFeeRecipient:other} : rpc.call(call.address,call.abi,call.functionName,call.args)));
+  };
   const {results}=await allPages("pons",rpc);
   assert.equal(results.length,1);
   assert.equal(batches,2);

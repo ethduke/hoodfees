@@ -174,7 +174,7 @@ test("known Long, pons escrow, v1 and unswept positions refresh without rediscov
       if(name==="deployer")return wallet;
       if(name==="tokenProtocolFeeShares")return 10n;
       if(name==="pairedToken")return NATIVE;
-      if(name==="getLaunchedToken")return{exists:true,creatorFeeRecipient:wallet,curve:asset,pairToken:NATIVE};
+      if(name==="getLaunchedToken")return{exists:true,token:args[0],creatorFeeRecipient:wallet,curve:asset,pairToken:NATIVE};
       if(name==="graduated")return false;
       if(name==="quoteFeeBalance")return 20n;
       if(name==="creatorTaxBalance"||name==="buybackQuoteBalance"||name==="protocolFeeShareBps")return 0n;

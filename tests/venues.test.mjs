@@ -220,6 +220,19 @@ test("Bankr hook receipt payouts remain bound to the approved ledger, pool and b
   assert.deepEqual(receiptPayouts(receipt, quote).map((r)=>[r.currency,r.raw]), [[WETH,"100"]]);
   assert.deepEqual(receiptPayouts({...receipt,logs:[{...log,address:LONG.address}]}, quote), []);
 });
+test("Bankr lazy history resolves transferred beneficiary payouts without the creator index",async()=>{
+  for(const target of [LONG,BANKR_HOOK]) {
+    const f=fixture();f.state.dopplerHook=target.id===BANKR_HOOK.id?BANKR_HOOK.address:LONG_HOOK.address;
+    f.state.pendingLogs=[{...claimedLog(),address:target.address,
+      topics:encodeEventTopics({abi:longAbi,eventName:"Release",args:{poolId:pool,beneficiary:wallet}}),
+      data:encodeAbiParameters([{type:"uint256"},{type:"uint256"}],[5n,7n])}];
+    let indexCalls=0;
+    const result=await scan({address:wallet,source:"bankr",scope:"history"},{...f.options,indexFetcher:async()=>{indexCalls++;throw new Error("must not query creator index");}});
+    assert.equal(indexCalls,0);assert.equal(result.coverage.complete,true);
+    assert.deepEqual(result.history.map(row=>[row.target,row.raw,row.position]),[[target.id,"5",pool],[target.id,"7",pool]]);
+    assert.equal(f.state.calls.some(call=>call.name==="getShares"||call.name==="collectFees"),false);
+  }
+});
 test("Bags durable checkpoints keep completed registry coverage and scan only newly added entries", async () => {
   const f = fixture();
   const first = await scan({address:wallet,source:"bags",scope:"balances"}, f.options);
