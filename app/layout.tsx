@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 const title = "HoodFees — Claim Creator Fees on Robinhood Chain";
 const description =
-  "Find and claim creator, deployer and referral fees on Robinhood Chain. Check O1, Long/Longbow and pons balances and track verified payouts with your wallet.";
+  "Find and claim creator, deployer and referral fees on Robinhood Chain. Check O1, Bags, Bankr, Long/Longbow, pons and PAIR balances and track verified payouts with your wallet.";
 export const metadata: Metadata = {
   title,
   description,

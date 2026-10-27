@@ -196,3 +196,27 @@ page and payload sizes, never total historical coverage.
 Source: https://developers.cloudflare.com/d1/platform/pricing/
 Source: https://developers.cloudflare.com/d1/platform/limits/
 Source: https://developers.cloudflare.com/workers/platform/limits/
+
+PAIR V1 adapter
+---------------
+PAIR discovery calls https://pair.fund/api/fees/claimable/:wallet on the server.
+Only asset identities at the pinned V1 locker are consumed; upstream balances,
+metadata, function names, routes and transaction payloads are ignored. Saved
+assets are unioned with new hints and refreshed using batched onchain claimable
+reads, even if a refreshed index no longer returns them. No additional key or
+database is required. PAIR does not publish a numeric read quota in its docs;
+HTTP 429 Retry-After is honored without inventing an account limit.
+
+Direct claim(asset) calls withdraw the caller's entire credited ERC-20 balance
+with zero native value and no approval. Server and wallet pin the immutable
+locker runtime and simulate the exact call. Receipt verification requires both
+FeesClaimed and matching ERC-20 transfers from the locker to the recipient.
+History loads on demand using wallet-filtered logs at a confirmed snapshot,
+then receipt and canonical-block verification. Signed checkpoints preserve old
+coverage and pending events; returning appends only newly confirmed blocks.
+
+Supported coverage is the reviewed current V1 locker only. Legacy lockers,
+Launch V2 epoch vaults, Infinity, conversions and unswept LP fees are excluded.
+Users collect unswept fees through PAIR before withdrawing credited assets here.
+Index completion is not an independent proof of all historical fee identities.
+Verified source: https://pair.fund/docs and Sourcify, chain 4663.

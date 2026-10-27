@@ -64,6 +64,7 @@ main { min-width: 0; flex: 1; padding: 24px 32px 0; }
 .source-chip .pad-mark { width: 19px; height: 19px; font-size: 11px; border-radius: 4px; }
 .pad-mark { display: inline-flex; justify-content: center; align-items: center; width: 33px; height: 33px; border-radius: 8px; font-weight: 600; font-size: 15px; flex-shrink: 0; }
 .pad-mark.o1 { background: #33413a; color: #aee2b7; font-size: 12px; letter-spacing: -1px; }
+.pad-mark.pair { background: #293b40; color: #9fdee2; }
 .pad-mark.bags { background: #243e32; color: #9ee8b9; }
 .pad-mark.bankr { background: #353842; color: #c8d5f5; }
 .pad-mark.long { background: #423745; color: #d9b3eb; font-size: 18px; }

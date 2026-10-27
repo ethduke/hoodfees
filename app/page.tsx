@@ -117,6 +117,7 @@ const errors: Record<string, string> = {
   index_unavailable: "The launchpad’s wallet index is unavailable. Saved progress is kept; try again shortly.",
 };
 const warningText: Record<string, string> = {
+  pair_unreviewed_locker: "PAIR returned fees in a locker outside the reviewed V1 deployment. Those fees are excluded here.",
   bags_index_truncated: "Bags’ wallet index returned an incomplete list. Registry discovery is used to finish supported coverage.",
   bags_index_legacy: "Legacy Bags v1 positions returned by the index are outside this adapter’s reviewed deployments and are excluded.",
   bankr_unreviewed_route: "Some Bankr positions use a hook or manager outside the reviewed deployments. Those fees are excluded.",
@@ -850,7 +851,7 @@ export default function Home() {
                               <ArrowUpRight size={12} />
                             </a>
                           ) : (
-                            <span className="table-muted">Shared escrow</span>
+                            <span className="table-muted">{row.source === "pair" ? "V1 fee locker" : "Shared escrow"}</span>
                           )}
                         </td>
                         {activeTab !== "history" && <td>
@@ -1004,16 +1005,16 @@ export default function Home() {
               <p>
                 <strong>Available and unswept are separate.</strong> Bags previews the sweep included
                 in its claim; payouts arrive as WETH. Pending pons fees may need
-                collection or conversion. Buyback earmarks can change the final payout. Asset totals
+                collection or conversion. PAIR shows credited V1 balances; unswept LP fees need collection on PAIR first. Buyback earmarks can change the final payout. Asset totals
                 are never converted into a pretend combined currency.
               </p>
               <p>
-                <strong>Progress stays in this browser.</strong> Scan results, source choices and signed progress cursors are stored locally per wallet so you can resume after refresh or reconnect. Reset scan removes the connected wallet’s saved progress. Search requests, credentials and signed wallet progress are never written to the shared database; it indexes public launch and beneficiary events so wallets can reuse discovery work. No wallet address is put in this site’s URLs, application logs or analytics. O1, Bankr and configured Bags discovery send your address to their wallet indexes through the server; public event indexing and onchain verification use the chain provider. Bankr discovery hints may be cached in memory for five minutes; balances are verified onchain. Hosting logs depend on the operator’s settings. Signed scan checkpoints survive cursor expiry. Returning refreshes known balances and discovery, then automatically finishes older unchecked ranges. A changed chain snapshot or signing key can require a reset.
+                <strong>Progress stays in this browser.</strong> Scan results, source choices and signed progress cursors are stored locally per wallet so you can resume after refresh or reconnect. Reset scan removes the connected wallet’s saved progress. Search requests, credentials and signed wallet progress are never written to the shared database; it indexes public launch and beneficiary events so wallets can reuse discovery work. No wallet address is put in this site’s URLs, application logs or analytics. O1, Bankr, PAIR and configured Bags discovery send your address to their wallet indexes through the server; public event indexing and onchain verification use the chain provider. Bankr discovery hints may be cached in memory for five minutes; balances are verified onchain. Hosting logs depend on the operator’s settings. Signed scan checkpoints survive cursor expiry. Returning refreshes known balances and discovery, then automatically finishes older unchecked ranges. A changed chain snapshot or signing key can require a reset.
               </p>
               <p>
-                <strong>More adapters come later.</strong> Flap, pools.trade, PAIR and other
+                <strong>More adapters come later.</strong> Flap, pools.trade and other
                 verified platforms are not included in this first release. pons’ older unreviewed
-                stacks, Bags v1, holder dividends and buyback vesting remain outside coverage.
+                stacks, Bags v1, PAIR legacy lockers, Launch V2 and Infinity, holder dividends and buyback vesting remain outside coverage.
               </p>
               <p>
                 <strong>You approve every claim.</strong> Scanning only reads the chain. Claiming sends one transaction after you review it and approve it in your wallet. Pool claims collect both assets together. Unswept estimates cannot be claimed here.

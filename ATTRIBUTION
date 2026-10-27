@@ -19,3 +19,7 @@ https://docs.bankr.bot/token-launching/claiming-fees/
 The build tooling uses braces 3.0.3 by Jon Schlinkert and contributors (MIT),
 vendored under vendor/braces with pattern/AST depth and node-count limits for
 GHSA-vfj7-8cjw-p6xm. The upstream license is retained beside the patched source.
+
+PAIR V1 claim and fee accounting reference:
+https://pair.fund/docs
+https://sourcify.dev/server/v2/contract/4663/
